@@ -182,7 +182,7 @@ function newChat() {
 
 function switchChat(id) {
   if (isStreaming) {
-    window.hermesAPI.cancelStream()
+    cancelCurrentStream()
     isStreaming = false
     setSendEnabled(true)
   }
@@ -419,7 +419,9 @@ function setSendEnabled(enabled) {
   sendBtn.disabled = !enabled
 }
 
-// ─── Send message ─────────────────────────────────────────────────────────────
+// ─── Send message (via stream proxy) ─────────────────────────────────────────
+
+let activeStreamCtrl = null  // { close(), eventSource } for current stream
 
 function sendMessage() {
   const text = msgInput.value.trim()
@@ -460,10 +462,71 @@ function sendMessage() {
   userScrolledUp = false
   setSendEnabled(false)
   resetStreamState()
-  let streamDone = false // guard against duplicate onDone
+  let streamDone = false
 
   let accumulated = ''
   const bubble = appendMessageBubble('assistant', '', true)
+
+  // ── Proxy stream (primary) ──────────────────────────────────────────────
+  // Try the local HTTP proxy first; fall back to legacy IPC if proxy is down
+  startProxyStream(chat, bubble, accumulated, streamDone)
+}
+
+async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
+  let streamDone = _streamDone
+  let accumulated = _accumulated
+
+  try {
+    const streamId = await window.hermesAPI.startStream(
+      chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
+      settings,
+      chat.sessionId,
+      chat.id
+    )
+
+    const ctrl = window.hermesAPI.connectStream(streamId, {
+      onChunk: (content) => {
+        accumulated += content
+        bubble.innerHTML = renderStreamChunk(accumulated)
+        bubble.classList.add('typing-cursor')
+        highlightCodeBlocks(bubble)
+        if (!userScrolledUp) scrollToBottom()
+      },
+      onModel: (model) => {
+        if (model) { realModel = model; syncModelPill(); updateContextPill() }
+      },
+      onSession: (sid) => {
+        if (sid && chat) { chat.sessionId = sid; saveState() }
+      },
+      onUsage: (usage) => {
+        if (usage && usage.prompt_tokens != null) {
+          contextUsed = usage.prompt_tokens
+          updateContextPill()
+        }
+      },
+      onDone: () => {
+        if (streamDone) return
+        streamDone = true
+        finishStream(bubble, accumulated, chat)
+      },
+      onError: (err) => {
+        if (streamDone) return
+        streamDone = true
+        errorStream(bubble, accumulated, err)
+      },
+    })
+
+    activeStreamCtrl = ctrl
+  } catch (err) {
+    // Proxy unavailable or conflict — fall back to legacy IPC
+    console.warn('[Hermes] Proxy stream failed, falling back to IPC:', err.message)
+    startIPCStream(chat, bubble)
+  }
+}
+
+function startIPCStream(chat, bubble) {
+  let streamDone = false
+  let accumulated = ''
 
   window.hermesAPI.removeAllListeners()
 
@@ -471,20 +534,12 @@ function sendMessage() {
     accumulated += chunk
     bubble.innerHTML = renderStreamChunk(accumulated)
     bubble.classList.add('typing-cursor')
-    // Highlight code blocks as they appear
     highlightCodeBlocks(bubble)
-    // Smart scroll
-    if (!userScrolledUp) {
-      scrollToBottom()
-    }
+    if (!userScrolledUp) scrollToBottom()
   })
 
   window.hermesAPI.onModel((model) => {
-    if (model) {
-      realModel = model
-      syncModelPill()
-      updateContextPill()
-    }
+    if (model) { realModel = model; syncModelPill(); updateContextPill() }
   })
 
   window.hermesAPI.onSession((sid) => {
@@ -499,40 +554,58 @@ function sendMessage() {
   })
 
   window.hermesAPI.onDone(() => {
-    if (streamDone) return // dedup
+    if (streamDone) return
     streamDone = true
-    bubble.classList.remove('typing-cursor')
-    // Full re-render on completion for clean output
-    bubble.innerHTML = renderMarkdown(accumulated)
-    highlightCodeBlocks(bubble)
-    chat.messages.push({ role: 'assistant', content: accumulated })
-    saveState()
-    isStreaming = false
-    userScrolledUp = false
-    setSendEnabled(true)
-    updateContextPill()
-    msgInput.focus()
-    hideScrollButton()
+    finishStream(bubble, accumulated, chat)
   })
 
   window.hermesAPI.onError((err) => {
-    if (streamDone) return // dedup
+    if (streamDone) return
     streamDone = true
-    bubble.classList.remove('typing-cursor')
-    if (!accumulated) bubble.innerHTML = `<span style="color:#e88">\u26A0 ${escapeHtml(err)}</span>`
-    showError(err)
-    isStreaming = false
-    userScrolledUp = false
-    setSendEnabled(true)
-    hideScrollButton()
+    errorStream(bubble, accumulated, err)
   })
 
   window.hermesAPI.sendMessage(
     chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
     settings,
     chat.sessionId,
-    chat.id  // pass chatId for concurrency guard
+    chat.id
   )
+}
+
+function finishStream(bubble, accumulated, chat) {
+  bubble.classList.remove('typing-cursor')
+  bubble.innerHTML = renderMarkdown(accumulated)
+  highlightCodeBlocks(bubble)
+  chat.messages.push({ role: 'assistant', content: accumulated })
+  saveState()
+  isStreaming = false
+  userScrolledUp = false
+  activeStreamCtrl = null
+  setSendEnabled(true)
+  updateContextPill()
+  msgInput.focus()
+  hideScrollButton()
+}
+
+function errorStream(bubble, accumulated, err) {
+  bubble.classList.remove('typing-cursor')
+  if (!accumulated) bubble.innerHTML = `<span style="color:#e88">\u26A0 ${escapeHtml(err)}</span>`
+  showError(err)
+  isStreaming = false
+  userScrolledUp = false
+  activeStreamCtrl = null
+  setSendEnabled(true)
+  hideScrollButton()
+}
+
+// Cancel current stream (called when switching chats or on explicit cancel)
+function cancelCurrentStream() {
+  if (activeStreamCtrl) {
+    activeStreamCtrl.close()
+    activeStreamCtrl = null
+  }
+  window.hermesAPI.cancelStreamIPC()
 }
 
 // ─── Input auto-resize ────────────────────────────────────────────────────────

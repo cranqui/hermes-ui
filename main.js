@@ -5,6 +5,10 @@ const https = require('https')
 
 let mainWindow
 
+// ─── Stream Proxy State ──────────────────────────────────────────────────────
+// Maps streamId → { request, buffer, events[], subscribers[], done, error }
+const activeStreams = new Map()
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -41,7 +45,7 @@ app.whenReady().then(() => {
           "script-src 'self'; " +
           "style-src 'self' 'unsafe-inline'; " +
           "img-src 'self' data: https:; " +
-          "connect-src http://localhost:8642 http://127.0.0.1:8642; " +
+          "connect-src http://localhost:8642 http://127.0.0.1:8642 http://localhost:8643 http://127.0.0.1:8643; " +
           "font-src 'self'; " +
           "media-src 'none'; " +
           "object-src 'none'; " +
@@ -56,6 +60,7 @@ app.whenReady().then(() => {
     })
   })
 
+  startProxyServer()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -64,6 +69,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+  proxyServer?.close()
 })
 
 // Prevent uncaught errors from crashing the app
@@ -75,15 +81,388 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Hermes Chat] Unhandled rejection:', reason)
 })
 
-// ─── IPC: Chat request → Hermes API (streaming) ─────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// STREAMING PROXY SERVER
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Why: The Hermes API returns SSE on a single POST request. This means:
+//   - If the connection drops, you lose the stream entirely (no reconnect)
+//   - Canceling requires destroying the HTTP request (messy)
+//   - The renderer can't use EventSource (which requires GET + auto-reconnect)
+//
+// Solution: A local HTTP proxy that splits into two endpoints:
+//   POST /stream/start  →  Creates a Hermes API request, returns {streamId}
+//   GET  /stream/events  →  SSE endpoint (EventSource-compatible), auto-reconnects
+//   GET  /stream/cancel  →  Kills the active request for that stream
+//
+// The renderer uses EventSource for consumption (built-in reconnect!) and
+// a simple fetch for start/cancel. This is the same pattern Hermes WebUI uses.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// Track active requests so we can cancel on chat switch
+const PROXY_PORT = 8643
+let proxyServer = null
+
+function startProxyServer() {
+  proxyServer = http.createServer((req, res) => {
+    // CORS for local renderer (same-origin usually, but be safe)
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    const url = new URL(req.url, `http://localhost:${PROXY_PORT}`)
+
+    if (url.pathname === '/stream/start' && req.method === 'POST') {
+      handleStreamStart(req, res)
+    } else if (url.pathname === '/stream/events' && req.method === 'GET') {
+      handleStreamEvents(req, res, url)
+    } else if (url.pathname === '/stream/cancel' && req.method === 'GET') {
+      handleStreamCancel(req, res, url)
+    } else if (url.pathname === '/stream/status' && req.method === 'GET') {
+      handleStreamStatus(req, res, url)
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Not found' }))
+    }
+  })
+
+  proxyServer.listen(PROXY_PORT, '127.0.0.1', () => {
+    console.log(`[Hermes Chat] Stream proxy on http://127.0.0.1:${PROXY_PORT}`)
+  })
+}
+
+// ─── POST /stream/start ──────────────────────────────────────────────────────
+// Creates a new Hermes API request and returns a streamId immediately.
+// The renderer then connects to GET /stream/events?id=STREAM_ID.
+function handleStreamStart(req, res) {
+  let body = ''
+  req.on('data', chunk => { body += chunk })
+  req.on('end', () => {
+    let params
+    try {
+      params = JSON.parse(body)
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Invalid JSON' }))
+      return
+    }
+
+    const { messages, settings, sessionId, chatId } = params
+
+    // Concurrency guard: reject if this chat is already streaming
+    for (const [, stream] of activeStreams) {
+      if (stream.chatId === chatId && !stream.done) {
+        res.writeHead(409, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'A message is already being sent in this chat.', streamId: null }))
+        return
+      }
+    }
+
+    const streamId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+
+    // Create stream state
+    const streamState = {
+      streamId,
+      chatId,
+      request: null,
+      events: [],      // buffered events for late subscribers
+      subscribers: [], // { res }
+      done: false,
+      error: null,
+      accumulated: '', // track content for reconnect recovery
+      usage: null,
+      model: null,
+      sessionId: sessionId || null,
+    }
+    activeStreams.set(streamId, streamState)
+
+    // Start the Hermes API request
+    startHermesRequest(streamState, params)
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ streamId }))
+  })
+}
+
+// ─── GET /stream/events?id=STREAM_ID ─────────────────────────────────────────
+// SSE endpoint. Renderer connects via EventSource. Auto-reconnect safe:
+// on reconnect, we replay buffered events then continue live.
+function handleStreamEvents(req, res, url) {
+  const streamId = url.searchParams.get('id')
+  const streamState = activeStreams.get(streamId)
+
+  if (!streamState) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('Stream not found')
+    return
+  }
+
+  // Set up SSE response
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no', // Disable nginx buffering
+  })
+
+  // Replay buffered events to this subscriber
+  for (const event of streamState.events) {
+    res.write(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`)
+  }
+
+  // If stream is already done, send done and close
+  if (streamState.done) {
+    if (streamState.error) {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: streamState.error })}\n\n`)
+    } else {
+      res.write(`event: done\ndata: {}\n\n`)
+    }
+    res.end()
+    return
+  }
+
+  // Register as a live subscriber
+  const subscriber = { res }
+  streamState.subscribers.push(subscriber)
+
+  // Clean up on disconnect
+  req.on('close', () => {
+    const idx = streamState.subscribers.indexOf(subscriber)
+    if (idx !== -1) streamState.subscribers.splice(idx, 1)
+  })
+}
+
+// ─── GET /stream/cancel?id=STREAM_ID ─────────────────────────────────────────
+function handleStreamCancel(req, res, url) {
+  const streamId = url.searchParams.get('id')
+  const streamState = activeStreams.get(streamId)
+
+  if (!streamState) {
+    res.writeHead(404, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Stream not found' }))
+    return
+  }
+
+  // Destroy the Hermes request
+  if (streamState.request) {
+    try { streamState.request.destroy() } catch (_) {}
+    streamState.request = null
+  }
+
+  // Notify subscribers and clean up
+  if (!streamState.done) {
+    streamState.done = true
+    streamState.error = 'Cancelled by user'
+    pushEvent(streamState, 'error', { message: 'Cancelled by user' })
+    pushEvent(streamState, 'done', {})
+  }
+
+  // Clean up stream after a delay (allow late reconnects to get the final events)
+  setTimeout(() => {
+    cleanupStream(streamId)
+  }, 5000)
+
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({ cancelled: true }))
+}
+
+// ─── GET /stream/status?id=STREAM_ID ─────────────────────────────────────────
+function handleStreamStatus(req, res, url) {
+  const streamId = url.searchParams.get('id')
+  const streamState = activeStreams.get(streamId)
+
+  if (!streamState) {
+    res.writeHead(404, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Stream not found' }))
+    return
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({
+    streamId,
+    chatId: streamState.chatId,
+    done: streamState.done,
+    error: streamState.error,
+    contentLength: streamState.accumulated.length,
+    hasUsage: !!streamState.usage,
+    hasModel: !!streamState.model,
+  }))
+}
+
+// ─── Core: Start Hermes API Request ──────────────────────────────────────────
+function startHermesRequest(streamState, params) {
+  const { messages, settings, sessionId } = params
+  const { endpoint, apiKey, model } = settings
+
+  const url = new URL(endpoint)
+  const isHttps = url.protocol === 'https:'
+  const transport = isHttps ? https : http
+
+  const body = JSON.stringify({
+    model: model || 'hermes-agent',
+    messages,
+    stream: true,
+  })
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+  }
+
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`
+  }
+
+  // Session continuity: reuse Hermes session across messages in the same chat
+  if (sessionId) {
+    headers['X-Hermes-Session-Id'] = sessionId
+  }
+
+  const options = {
+    hostname: url.hostname,
+    port: url.port || (isHttps ? 443 : 80),
+    path: url.pathname,
+    method: 'POST',
+    headers,
+  }
+
+  let doneSent = false
+
+  const req = transport.request(options, (apiRes) => {
+    let buffer = ''
+
+    apiRes.on('data', (chunk) => {
+      buffer += chunk.toString()
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith('data: ')) continue
+        const data = trimmed.slice(6)
+        if (data === '[DONE]') {
+          if (!doneSent) {
+            doneSent = true
+            streamState.done = true
+            pushEvent(streamState, 'done', {})
+            // Clean up stream state after 5 minutes (allow reconnects)
+            setTimeout(() => cleanupStream(streamState.streamId), 300000)
+          }
+          return
+        }
+        try {
+          const parsed = JSON.parse(data)
+          const delta = parsed.choices?.[0]?.delta?.content
+          if (delta) {
+            streamState.accumulated += delta
+            pushEvent(streamState, 'chunk', { content: delta })
+          }
+          if (parsed.usage) {
+            streamState.usage = parsed.usage
+            pushEvent(streamState, 'usage', parsed.usage)
+          }
+          if (parsed.model) {
+            streamState.model = parsed.model
+            pushEvent(streamState, 'model', { model: parsed.model })
+          }
+          const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
+          if (sid) {
+            streamState.sessionId = sid
+            pushEvent(streamState, 'session', { sessionId: sid })
+          }
+        } catch (_) {
+          // ignore malformed lines
+        }
+      }
+    })
+
+    apiRes.on('end', () => {
+      if (!doneSent) {
+        doneSent = true
+        streamState.done = true
+        pushEvent(streamState, 'done', {})
+        setTimeout(() => cleanupStream(streamState.streamId), 300000)
+      }
+      if (streamState.request === req) streamState.request = null
+    })
+
+    apiRes.on('error', (err) => {
+      if (!doneSent) {
+        doneSent = true
+        streamState.done = true
+        streamState.error = err.message
+        pushEvent(streamState, 'error', { message: err.message })
+        setTimeout(() => cleanupStream(streamState.streamId), 60000)
+      }
+      if (streamState.request === req) streamState.request = null
+    })
+  })
+
+  req.on('error', (err) => {
+    if (!doneSent) {
+      doneSent = true
+      streamState.done = true
+      streamState.error = err.message
+      pushEvent(streamState, 'error', { message: err.message })
+      setTimeout(() => cleanupStream(streamState.streamId), 60000)
+    }
+  })
+
+  req.write(body)
+  req.end()
+  streamState.request = req
+}
+
+// ─── Push event to all SSE subscribers + buffer for reconnect ────────────────
+function pushEvent(streamState, type, data) {
+  const event = { type, data, timestamp: Date.now() }
+  streamState.events.push(event)
+
+  // Buffer limit: keep max 5000 events to prevent memory leaks on very long streams
+  if (streamState.events.length > 5000) {
+    streamState.events = streamState.events.slice(-2500)
+  }
+
+  for (const sub of streamState.subscribers) {
+    try {
+      sub.res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)
+    } catch (_) {
+      // Subscriber disconnected; will be cleaned up on close event
+    }
+  }
+}
+
+// ─── Clean up completed stream state ──────────────────────────────────────────
+function cleanupStream(streamId) {
+  const streamState = activeStreams.get(streamId)
+  if (!streamState) return
+
+  // Close any remaining SSE subscriber connections
+  for (const sub of streamState.subscribers) {
+    try { sub.res.end() } catch (_) {}
+  }
+
+  // Destroy the Hermes request if still active
+  if (streamState.request) {
+    try { streamState.request.destroy() } catch (_) {}
+  }
+
+  activeStreams.delete(streamId)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEGACY IPC (kept for fallback — renderer can use proxy or IPC)
+// ═══════════════════════════════════════════════════════════════════════════════
+
 let activeRequest = null
-let activeChatId = null  // Track which chat is currently streaming
+let activeChatId = null
 
 ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => {
-  // ── Concurrency guard ──────────────────────────────────────────────
-  // Reject if this chat is already streaming
   if (activeChatId === chatId) {
     event.sender.send('chat-stream-error', 'A message is already being sent in this chat.')
     return
@@ -105,12 +484,10 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
     'Content-Length': Buffer.byteLength(body),
   }
 
-  // Add Bearer auth if key is configured
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`
   }
 
-  // Session continuity: reuse Hermes session across messages in the same chat
   if (sessionId) {
     headers['X-Hermes-Session-Id'] = sessionId
   }
@@ -123,7 +500,6 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
     headers,
   }
 
-  // Cancel any previous in-flight request
   if (activeRequest) {
     try { activeRequest.destroy() } catch (_) {}
     activeRequest = null
@@ -131,13 +507,13 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
 
   let doneSent = false
 
-  const req = transport.request(options, (res) => {
+  const req = transport.request(options, (apiRes) => {
     let buffer = ''
 
-    res.on('data', (chunk) => {
+    apiRes.on('data', (chunk) => {
       buffer += chunk.toString()
       const lines = buffer.split('\n')
-      buffer = lines.pop() // keep incomplete last line
+      buffer = lines.pop()
 
       for (const line of lines) {
         const trimmed = line.trim()
@@ -155,20 +531,15 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
           const parsed = JSON.parse(data)
           const delta = parsed.choices?.[0]?.delta?.content
           if (delta) event.sender.send('chat-stream-chunk', delta)
-          // Capture usage from final chunk (prompt_tokens, completion_tokens, total_tokens)
           if (parsed.usage) event.sender.send('chat-stream-usage', parsed.usage)
-          // Capture model name from first response (e.g. "glm-5.1:cloud")
           if (parsed.model) event.sender.send('chat-stream-model', parsed.model)
-          // Capture session ID from first response if available
           const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
           if (sid) event.sender.send('chat-stream-session', sid)
-        } catch (_) {
-          // ignore malformed lines
-        }
+        } catch (_) {}
       }
     })
 
-    res.on('end', () => {
+    apiRes.on('end', () => {
       if (!doneSent) {
         doneSent = true
         activeChatId = null
@@ -177,7 +548,7 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
       if (activeRequest === req) activeRequest = null
     })
 
-    res.on('error', (err) => {
+    apiRes.on('error', (err) => {
       if (!doneSent) {
         doneSent = true
         activeChatId = null
@@ -196,10 +567,9 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
   req.write(body)
   req.end()
   activeRequest = req
-  activeChatId = chatId  // Mark this chat as streaming
+  activeChatId = chatId
 })
 
-// Cancel active stream when user switches chats
 ipcMain.on('chat-cancel', () => {
   if (activeRequest) {
     try { activeRequest.destroy() } catch (_) {}
