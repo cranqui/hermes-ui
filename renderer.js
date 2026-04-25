@@ -49,12 +49,14 @@ let contextUsed = null   // prompt_tokens from last response
 
 const INFLIGHT_KEY = 'hermes_inflight'
 
-function saveInflight(chatId, messages, sessionId, accumulated) {
+function saveInflight(chatId, messages, sessionId, accumulated, model) {
   const snapshot = {
     chatId,
-    messages,        // array of {role, content} — up to and including the user's last message
+    messages,        // array of {role, content, id, createdAt, model, promptTokens}
     sessionId,
     accumulated,     // partial assistant content so far (empty string on request start)
+    model,           // model name from stream (for recovery)
+    createdAt: Date.now(), // when the user message was sent
     timestamp: Date.now(),
   }
   try {
@@ -112,9 +114,14 @@ function recoverInflight() {
 
   // If we have accumulated content, add it as an interrupted assistant message
   if (snapshot.accumulated && snapshot.accumulated.trim()) {
+    // Enhanced message model: id, createdAt, model, promptTokens
     chat.messages.push({
+      id: crypto.randomUUID(),
       role: 'assistant',
       content: snapshot.accumulated + '\n\n— *Response interrupted (app restarted)*',
+      model: snapshot.model || null,
+      promptTokens: snapshot.promptTokens || null,
+      createdAt: snapshot.createdAt || Date.now(),
     })
   }
 
@@ -445,6 +452,18 @@ function formatTokens(n) {
   return String(n)
 }
 
+// Format message timestamp — compact: "14:32" today, "Yesterday 14:32", "Apr 24 14:32"
+function formatMsgTime(ts) {
+  const d = new Date(ts)
+  const now = new Date()
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const isToday = d.toDateString() === now.toDateString()
+  if (isToday) return time
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time
+}
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -554,7 +573,13 @@ function renderMessages() {
   welcome.style.display = 'none'
   msgContainer.style.display = 'flex'
   msgContainer.innerHTML = ''
-  for (const msg of chat.messages) appendMessageBubble(msg.role, msg.content, false)
+  for (const msg of chat.messages) {
+    appendMessageBubble(msg.role, msg.content, false, {
+      id: msg.id,
+      createdAt: msg.createdAt,
+      model: msg.model,
+    })
+  }
   scrollToBottom(true) // force scroll on chat switch
   // Highlight code blocks after rendering
   highlightCodeBlocks(msgContainer)
@@ -562,11 +587,12 @@ function renderMessages() {
   renderMath(msgContainer)
 }
 
-function appendMessageBubble(role, content, streaming = false) {
+function appendMessageBubble(role, content, streaming = false, meta = {}) {
   const row = document.createElement('div')
   row.className = `msg-row ${role}`
   const bubble = document.createElement('div')
   bubble.className = 'msg-bubble'
+  if (meta.id) bubble.dataset.msgId = meta.id
   if (streaming) bubble.classList.add('typing-cursor')
 
   if (role === 'assistant') {
@@ -576,6 +602,16 @@ function appendMessageBubble(role, content, streaming = false) {
   }
 
   row.appendChild(bubble)
+
+  // Timestamp metadata line (shown on hover / always for assistant)
+  if (meta.createdAt) {
+    const timeEl = document.createElement('div')
+    timeEl.className = 'msg-time'
+    timeEl.textContent = formatMsgTime(meta.createdAt)
+    if (meta.model) timeEl.textContent += ` · ${meta.model}`
+    row.appendChild(timeEl)
+  }
+
   msgContainer.appendChild(row)
 
   // Highlight code blocks in the new bubble
@@ -618,7 +654,15 @@ function sendMessage() {
   const fileCount   = attachedFiles.length
   const fileNames   = attachedFiles.map(f => f.name)
   const fullContent = buildMessageWithAttachments(text)
-  chat.messages.push({ role: 'user', content: fullContent })
+    // Enhanced message model: id, createdAt, model, promptTokens
+    chat.messages.push({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: fullContent,
+      model: null,
+      promptTokens: null,
+      createdAt: Date.now(),
+    })
 
   // Clear input + attachments
   msgInput.value = ''
@@ -655,7 +699,8 @@ function sendMessage() {
     chat.id,
     chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
     chat.sessionId,
-    ''
+    '',
+    realModel || null
   )
 
   // ── Proxy stream (primary) ──────────────────────────────────────────────
@@ -666,13 +711,13 @@ function sendMessage() {
 // Throttle inflight saves to every 500ms during streaming (avoid localStorage thrash)
 let _inflightThrottleTimer = null
 
-function throttledSaveInflight(chatId, messages, sessionId, accumulated) {
+function throttledSaveInflight(chatId, messages, sessionId, accumulated, model) {
   // Always save the latest values into the throttle slot
-  _inflightThrottleSlot = { chatId, messages, sessionId, accumulated }
+  _inflightThrottleSlot = { chatId, messages, sessionId, accumulated, model }
   if (_inflightThrottleTimer) return
   _inflightThrottleTimer = setTimeout(() => {
     const s = _inflightThrottleSlot
-    if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated)
+    if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated, s.model)
     _inflightThrottleTimer = null
   }, 500)
 }
@@ -699,7 +744,7 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
         highlightCodeBlocks(bubble)
         if (!userScrolledUp) scrollToBottom()
         // Update inflight snapshot (throttled)
-        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated)
+        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated, realModel || null)
       },
       onModel: (model) => {
         if (model) { realModel = model; syncModelPill(); updateContextPill() }
@@ -748,7 +793,7 @@ function startIPCStream(chat, bubble) {
         bubble.classList.add('typing-cursor')
         highlightCodeBlocks(bubble)
         if (!userScrolledUp) scrollToBottom()
-        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated)
+        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated, realModel || null)
         break
       case 'model':
         if (payload.model) { realModel = payload.model; syncModelPill(); updateContextPill() }
@@ -790,7 +835,15 @@ function finishStream(bubble, accumulated, chat) {
   bubble.innerHTML = renderMarkdown(accumulated)
   highlightCodeBlocks(bubble)
   renderMath(bubble)
-  chat.messages.push({ role: 'assistant', content: accumulated })
+  // Enhanced message model: store model + token info on the just-completed assistant message
+  chat.messages.push({
+    id: crypto.randomUUID(),
+    role: 'assistant',
+    content: accumulated,
+    model: realModel || null,
+    promptTokens: contextUsed || null,
+    createdAt: Date.now(),
+  })
   saveState()
   isStreaming = false
   userScrolledUp = false
@@ -1070,6 +1123,6 @@ window.addEventListener('beforeunload', () => {
   if (isStreaming && _inflightThrottleSlot) {
     // Force-flush the throttled inflight save
     const s = _inflightThrottleSlot
-    if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated)
+    if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated, s.model)
   }
 })

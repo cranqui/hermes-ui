@@ -227,6 +227,22 @@
     .msg-row.user   { justify-content: flex-end;  margin-bottom: 6px; }
     .msg-row.assistant { justify-content: flex-start; margin-bottom: 16px; }
 
+    /* Message timestamp + model metadata */
+    .msg-time {
+      font-size: 11px;
+      color: var(--text-secondary);
+      opacity: 0.6;
+      margin-top: 2px;
+      padding: 0 4px;
+    }
+    .msg-row.user .msg-time {
+      text-align: right;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .msg-row.user:hover .msg-time { opacity: 0.6; }
+    .msg-row.assistant .msg-time { opacity: 0.5; }
+
     .msg-bubble {
       max-width: 70%;
       line-height: 1.65;
