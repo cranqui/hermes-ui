@@ -734,6 +734,18 @@ function sendMessage() {
   if (!text && !hasAttachments) return
   if (isStreaming) return
 
+  // Slash command interception
+  if (text.startsWith('/')) {
+    const parts = text.split(/\s+/)
+    const cmd = parts[0].toLowerCase()
+    const args = parts.slice(1).join(' ')
+    msgInput.value = ''
+    autoResize()
+    setSendEnabled(false)
+    handleSlashCommand(cmd, args)
+    return
+  }
+
   let chat = getActiveChat()
   if (!chat) { newChat(); chat = getActiveChat() }
 
@@ -974,11 +986,21 @@ function autoResize() {
 msgInput.addEventListener('input', () => {
   autoResize()
   setSendEnabled((msgInput.value.trim().length > 0 || attachedFiles.length > 0) && !isStreaming)
+  updateCommandMenu()
 })
 
 // ─── Send key preference ─────────────────────────────────────────────────────
 
 msgInput.addEventListener('keydown', (e) => {
+  // Command menu navigation
+  if (commandMenuOpen) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); navigateCommandMenu(1); return }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); navigateCommandMenu(-1); return }
+    if (e.key === 'Enter')     { e.preventDefault(); selectCommandMenuItem(); return }
+    if (e.key === 'Escape')    { e.preventDefault(); hideCommandMenu(); return }
+    if (e.key === 'Tab')       { e.preventDefault(); selectCommandMenuItem(); return }
+  }
+
   if (settings.sendKey === 'ctrl-enter') {
     // Ctrl+Enter sends, plain Enter inserts newline
     if (e.key === 'Enter' && e.ctrlKey) {
@@ -1002,6 +1024,125 @@ document.getElementById('new-chat-btn').addEventListener('click', () => {
 
 // Model pill → open settings
 document.getElementById('model-pill').addEventListener('click', openSettings)
+
+// ─── Slash commands ──────────────────────────────────────────────────────────
+
+const SLASH_COMMANDS = [
+  { cmd: '/clear',  desc: 'Clear messages in current chat' },
+  { cmd: '/export', desc: 'Export current chat as Markdown' },
+  { cmd: '/help',   desc: 'Show available commands' },
+]
+
+let commandMenuOpen = false
+let commandMenuIdx = -1
+const commandMenu = document.getElementById('command-menu')
+
+function handleSlashCommand(cmd, _args) {
+  const chat = getActiveChat()
+  switch (cmd) {
+    case '/clear':
+      if (!chat) { showError('No active chat to clear'); return }
+      chat.messages = []
+      saveActiveChat()
+      renderMessages()
+      break
+    case '/export':
+      if (!chat) { showError('No active chat to export'); return }
+      exportChatAsMarkdown(chat)
+      break
+    case '/help':
+      const lines = SLASH_COMMANDS.map(c => `**${c.cmd}** — ${c.desc}`).join('\n')
+      // Show as a system message in the current chat
+      if (!chat) { newChat() }
+      const active = getActiveChat()
+      active.messages.push({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: lines,
+        model: 'system',
+        promptTokens: null,
+        createdAt: Date.now(),
+      })
+      saveActiveChat()
+      renderMessages()
+      scrollToBottom(true)
+      break
+    default:
+      showError(`Unknown command: ${cmd}. Type /help for commands.`)
+  }
+}
+
+function exportChatAsMarkdown(chat) {
+  const lines = [`# ${chat.title}`, '']
+  for (const m of chat.messages) {
+    const ts = m.createdAt ? new Date(m.createdAt).toLocaleString() : ''
+    const label = m.role === 'user' ? '**You**' : m.role === 'assistant' ? '**Assistant**' : `**${m.role}**`
+    lines.push(`### ${label}${ts ? ' — ' + ts : ''}`)
+    lines.push('')
+    lines.push(m.content || '(empty)')
+    lines.push('')
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = (chat.title || 'chat').replace(/[^a-z0-9]/gi, '_') + '.md'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function updateCommandMenu() {
+  const val = msgInput.value
+  if (!val.startsWith('/')) { hideCommandMenu(); return }
+  const partial = val.toLowerCase().split(/\s/)[0]
+  const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(partial))
+  if (!matches.length || (matches.length === 1 && matches[0].cmd === partial)) {
+    hideCommandMenu()
+    return
+  }
+  commandMenuIdx = -1
+  commandMenu.innerHTML = matches.map(c =>
+    `<div class="cmd-item" data-cmd="${c.cmd}"><span class="cmd-name">${c.cmd}</span><span class="cmd-desc">${c.desc}</span></div>`
+  ).join('')
+  commandMenu.querySelectorAll('.cmd-item').forEach(el => {
+    el.addEventListener('click', () => {
+      msgInput.value = el.dataset.cmd + ' '
+      hideCommandMenu()
+      msgInput.focus()
+      autoResize()
+      setSendEnabled(true)
+    })
+  })
+  commandMenu.style.display = 'block'
+  commandMenuOpen = true
+}
+
+function navigateCommandMenu(dir) {
+  const items = commandMenu.querySelectorAll('.cmd-item')
+  if (!items.length) return
+  if (commandMenuIdx >= 0) items[commandMenuIdx].classList.remove('selected')
+  commandMenuIdx = (commandMenuIdx + dir + items.length) % items.length
+  items[commandMenuIdx].classList.add('selected')
+  items[commandMenuIdx].scrollIntoView({ block: 'nearest' })
+}
+
+function selectCommandMenuItem() {
+  const items = commandMenu.querySelectorAll('.cmd-item')
+  if (commandMenuIdx < 0 && items.length === 1) commandMenuIdx = 0
+  if (commandMenuIdx < 0) return
+  const cmd = items[commandMenuIdx].dataset.cmd
+  msgInput.value = cmd + ' '
+  hideCommandMenu()
+  msgInput.focus()
+  autoResize()
+  setSendEnabled(true)
+}
+
+function hideCommandMenu() {
+  commandMenu.style.display = 'none'
+  commandMenuOpen = false
+  commandMenuIdx = -1
+}
 
 // ─── File attachment ──────────────────────────────────────────────────────────
 
