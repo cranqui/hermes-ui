@@ -261,7 +261,7 @@ function generateId() {
 }
 
 function newChat() {
-  const chat = { id: generateId(), title: 'New chat', messages: [], sessionId: null }
+  const chat = { id: generateId(), title: 'New chat', messages: [], sessionId: null, createdAt: Date.now() }
   chats.unshift(chat)
   activeChatId = chat.id
   saveState()
@@ -429,28 +429,88 @@ function renderMarkdown(text) {
   return sanitizeHtml(raw)
 }
 
+// Migrate chats missing createdAt (assigned in insertion order)
+function migrateTimestamps() {
+  // Most recent first — assign timestamps backfilling from now
+  let migrated = false
+  const now = Date.now()
+  for (let i = 0; i < chats.length; i++) {
+    if (!chats[i].createdAt) {
+      // 1-hour intervals going back, newest = now, oldest = now - (n-1)h
+      chats[i].createdAt = now - (i * 3600000)
+      migrated = true
+    }
+  }
+  if (migrated) saveState()
+}
+
+function groupChatsByTime(chats) {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterday = new Date(today.getTime() - 86400000)
+  const week = new Date(today.getTime() - 7 * 86400000)
+  const month = new Date(today.getTime() - 30 * 86400000)
+
+  const groups = [
+    { label: 'Today', chats: [] },
+    { label: 'Yesterday', chats: [] },
+    { label: 'Previous 7 Days', chats: [] },
+    { label: 'Previous 30 Days', chats: [] },
+    { label: 'Older', chats: [] },
+  ]
+
+  for (const chat of chats) {
+    const ts = new Date(chat.createdAt)
+    if (ts >= today)       groups[0].chats.push(chat)
+    else if (ts >= yesterday) groups[1].chats.push(chat)
+    else if (ts >= week)   groups[2].chats.push(chat)
+    else if (ts >= month)  groups[3].chats.push(chat)
+    else                   groups[4].chats.push(chat)
+  }
+
+  return groups
+}
+
 function renderSidebar() {
   chatList.innerHTML = ''
   const query = searchQuery.toLowerCase()
-  for (const chat of chats) {
-    // Filter by search query
-    if (query && !chat.title.toLowerCase().includes(query)) continue
+  const filtered = query ? chats.filter(c => c.title.toLowerCase().includes(query)) : chats
 
-    const item = document.createElement('div')
-    item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '')
-    item.innerHTML = `
-      <span class="chat-item-title">${escapeHtml(chat.title)}</span>
-      <button class="chat-item-delete" title="Delete">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
-          <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
-        </svg>
-      </button>`
-    item.querySelector('.chat-item-title').addEventListener('click', () => switchChat(chat.id))
-    item.querySelector('.chat-item-delete').addEventListener('click', (e) => {
-      e.stopPropagation(); deleteChat(chat.id)
-    })
-    chatList.appendChild(item)
+  if (!filtered.length) {
+    const empty = document.createElement('div')
+    empty.className = 'sidebar-empty'
+    empty.textContent = query ? 'No matching chats' : 'No chats yet'
+    chatList.appendChild(empty)
+    return
+  }
+
+  const groups = groupChatsByTime(filtered)
+
+  for (const group of groups) {
+    if (!group.chats.length) continue
+
+    const header = document.createElement('div')
+    header.className = 'chat-section-header'
+    header.textContent = group.label
+    chatList.appendChild(header)
+
+    for (const chat of group.chats) {
+      const item = document.createElement('div')
+      item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '')
+      item.innerHTML = `
+        <span class="chat-item-title">${escapeHtml(chat.title)}</span>
+        <button class="chat-item-delete" title="Delete">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+            <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+          </svg>
+        </button>`
+      item.querySelector('.chat-item-title').addEventListener('click', () => switchChat(chat.id))
+      item.querySelector('.chat-item-delete').addEventListener('click', (e) => {
+        e.stopPropagation(); deleteChat(chat.id)
+      })
+      chatList.appendChild(item)
+    }
   }
 }
 
@@ -962,6 +1022,7 @@ async function fetchModelInfo() {
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 loadState()
+migrateTimestamps()
 recoverInflight()  // Restore partial conversation if app crashed mid-stream
 syncModelPill()
 fetchModelInfo()
