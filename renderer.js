@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
   endpoint: 'http://localhost:8642/v1/chat/completions',
   apiKey: 'change-me-local-dev',
   model: 'hermes-agent',
+  sendKey: 'enter', // 'enter' or 'ctrl-enter'
 }
 
 let settings = { ...DEFAULT_SETTINGS }
@@ -50,6 +51,38 @@ function initMarked() {
   _markedReady = true
 }
 
+// ─── Streaming Markdown: delta renderer ───────────────────────────────────────
+// Instead of re-parsing the entire text on every chunk, we track the render
+// state and only update what changed. Full re-render on stream completion.
+
+const _streamState = { prevLen: 0, prevRendered: '', inCodeFence: false }
+
+function renderStreamChunk(accumulated) {
+  // On stream completion or first chunk, just do a full render
+  if (accumulated.length < _streamState.prevLen + 5) {
+    // Small delta — do full render (marked is fast enough for incremental)
+    // But track code fence state to close unclosed fences
+    const openFences = (accumulated.match(/```/g) || []).length
+    let html = renderMarkdown(accumulated)
+    // If odd number of code fence markers, close the last one
+    if (openFences % 2 !== 0) {
+      html += '</code></pre>'
+    }
+    _streamState.prevLen = accumulated.length
+    _streamState.prevRendered = html
+    return html
+  }
+
+  _streamState.prevLen = accumulated.length
+  return renderMarkdown(accumulated)
+}
+
+function resetStreamState() {
+  _streamState.prevLen = 0
+  _streamState.prevRendered = ''
+  _streamState.inCodeFence = false
+}
+
 // ─── HTML sanitisation ───────────────────────────────────────────────────────
 
 function sanitizeHtml(html) {
@@ -57,8 +90,11 @@ function sanitizeHtml(html) {
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['p','br','strong','em','b','i','code','pre','h1','h2','h3','h4',
         'ul','ol','li','blockquote','a','table','thead','tbody','tr','th','td',
-        'span','div','hr','del','sup','sub'],
-      ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class'],
+        'span','div','hr','del','sup','sub','button','svg','path','polyline','line'],
+      ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class', 'd', 'viewBox',
+        'width', 'height', 'fill', 'stroke', 'stroke-width', 'stroke-linecap',
+        'stroke-linejoin', 'points', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r',
+        'data-lang', 'data-clipboard-target'],
       ALLOW_DATA_ATTR: false,
     })
   }
@@ -68,6 +104,47 @@ function sanitizeHtml(html) {
     .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     .replace(/<object[\s\S]*?<\/object>/gi, '')
     .replace(/<embed[^>]*>/gi, '')
+}
+
+// ─── Syntax highlighting helper ──────────────────────────────────────────────
+
+function highlightCodeBlocks(container) {
+  if (typeof hljs !== 'undefined' && !window._hljsLoadFailed) {
+    container.querySelectorAll('pre code').forEach((block) => {
+      // Only highlight unprocessed blocks
+      if (!block.dataset.highlighted) {
+        hljs.highlightElement(block)
+        block.dataset.highlighted = 'true'
+      }
+
+      // Add language label + copy button (only once per block)
+      if (block.parentElement && !block.parentElement.querySelector('.code-header')) {
+        const pre = block.parentElement
+        const lang = (block.className.match(/language-(\S+)/) || [])[1] || ''
+
+        const header = document.createElement('div')
+        header.className = 'code-header'
+        header.innerHTML = `
+          <span class="code-lang">${escapeHtml(lang)}</span>
+          <button class="code-copy-btn" title="Copy code">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>`
+
+        header.querySelector('.code-copy-btn').addEventListener('click', () => {
+          navigator.clipboard.writeText(block.textContent).then(() => {
+            const btn = header.querySelector('.code-copy-btn')
+            const originalHTML = btn.innerHTML
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>'
+            setTimeout(() => { btn.innerHTML = originalHTML }, 1500)
+          })
+        })
+
+        pre.insertBefore(header, block)
+      }
+    })
+  }
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
@@ -135,7 +212,69 @@ function setTitle(id, title) {
   if (c) { c.title = title.slice(0, 60); saveState(); renderSidebar() }
 }
 
-// ─── Render helpers ───────────────────────────────────────────────────────────
+// ─── Search filter ───────────────────────────────────────────────────────────
+
+const searchInput = document.getElementById('chat-search')
+let searchQuery = ''
+
+if (searchInput) {
+  searchInput.addEventListener('input', () => {
+    searchQuery = searchInput.value.trim().toLowerCase()
+    renderSidebar()
+  })
+}
+
+// ─── Smart auto-scroll ───────────────────────────────────────────────────────
+
+const isNearBottom = (tolerance = 80) => {
+  return msgContainer.scrollTop + msgContainer.clientHeight >= msgContainer.scrollHeight - tolerance
+}
+
+let scrollBtnVisible = false
+const scrollToBottomBtn = document.getElementById('scroll-to-bottom')
+
+function scrollToBottom(force = false) {
+  if (force || isNearBottom()) {
+    msgContainer.scrollTop = msgContainer.scrollHeight
+    hideScrollButton()
+  }
+}
+
+function showScrollButton() {
+  if (scrollToBottomBtn && !scrollBtnVisible) {
+    scrollBtnVisible = true
+    scrollToBottomBtn.classList.add('visible')
+  }
+}
+
+function hideScrollButton() {
+  if (scrollToBottomBtn && scrollBtnVisible) {
+    scrollBtnVisible = false
+    scrollToBottomBtn.classList.remove('visible')
+  }
+}
+
+if (scrollToBottomBtn) {
+  scrollToBottomBtn.addEventListener('click', () => {
+    msgContainer.scrollTop = msgContainer.scrollHeight
+    hideScrollButton()
+  })
+}
+
+// Track scroll position during streaming
+let userScrolledUp = false
+msgContainer.addEventListener('scroll', () => {
+  if (isStreaming) {
+    userScrolledUp = !isNearBottom()
+    if (userScrolledUp) {
+      showScrollButton()
+    } else {
+      hideScrollButton()
+    }
+  }
+})
+
+// ─── Render helpers ───────────────────────────────────────────────────────
 
 const chatList       = document.getElementById('chat-list')
 const msgContainer   = document.getElementById('messages')
@@ -161,7 +300,6 @@ function updateContextPill() {
   if (!pill) return
 
   if (contextWindow == null && contextUsed == null) {
-    // Nothing received yet — keep hidden
     pill.classList.remove('visible')
     return
   }
@@ -175,7 +313,6 @@ function updateContextPill() {
     fill.style.width = pct + '%'
     fill.className = pct >= 80 ? 'hot' : pct >= 50 ? 'warm' : ''
   } else {
-    // Know usage but not window size
     text.textContent = formatTokens(contextUsed)
     fill.style.width = '0%'
     fill.className = ''
@@ -203,7 +340,11 @@ function renderMarkdown(text) {
 
 function renderSidebar() {
   chatList.innerHTML = ''
+  const query = searchQuery.toLowerCase()
   for (const chat of chats) {
+    // Filter by search query
+    if (query && !chat.title.toLowerCase().includes(query)) continue
+
     const item = document.createElement('div')
     item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '')
     item.innerHTML = `
@@ -233,7 +374,9 @@ function renderMessages() {
   msgContainer.style.display = 'flex'
   msgContainer.innerHTML = ''
   for (const msg of chat.messages) appendMessageBubble(msg.role, msg.content, false)
-  scrollToBottom()
+  scrollToBottom(true) // force scroll on chat switch
+  // Highlight code blocks after rendering
+  highlightCodeBlocks(msgContainer)
 }
 
 function appendMessageBubble(role, content, streaming = false) {
@@ -251,12 +394,20 @@ function appendMessageBubble(role, content, streaming = false) {
 
   row.appendChild(bubble)
   msgContainer.appendChild(row)
-  scrollToBottom()
-  return bubble
-}
 
-function scrollToBottom() {
-  msgContainer.scrollTop = msgContainer.scrollHeight
+  // Highlight code blocks in the new bubble
+  highlightCodeBlocks(bubble)
+
+  // Smart scroll: only if user is near bottom
+  if (streaming) {
+    if (!userScrolledUp) {
+      scrollToBottom()
+    }
+  } else {
+    scrollToBottom()
+  }
+
+  return bubble
 }
 
 function updateTopbar() {
@@ -306,7 +457,9 @@ function sendMessage() {
   if (chat.messages.length === 1) { setTitle(chat.id, titleText); updateTopbar() }
 
   isStreaming = true
+  userScrolledUp = false
   setSendEnabled(false)
+  resetStreamState()
   let streamDone = false // guard against duplicate onDone
 
   let accumulated = ''
@@ -316,9 +469,14 @@ function sendMessage() {
 
   window.hermesAPI.onChunk((chunk) => {
     accumulated += chunk
-    bubble.innerHTML = renderMarkdown(accumulated)
+    bubble.innerHTML = renderStreamChunk(accumulated)
     bubble.classList.add('typing-cursor')
-    scrollToBottom()
+    // Highlight code blocks as they appear
+    highlightCodeBlocks(bubble)
+    // Smart scroll
+    if (!userScrolledUp) {
+      scrollToBottom()
+    }
   })
 
   window.hermesAPI.onModel((model) => {
@@ -344,13 +502,17 @@ function sendMessage() {
     if (streamDone) return // dedup
     streamDone = true
     bubble.classList.remove('typing-cursor')
+    // Full re-render on completion for clean output
     bubble.innerHTML = renderMarkdown(accumulated)
+    highlightCodeBlocks(bubble)
     chat.messages.push({ role: 'assistant', content: accumulated })
     saveState()
     isStreaming = false
+    userScrolledUp = false
     setSendEnabled(true)
     updateContextPill()
     msgInput.focus()
+    hideScrollButton()
   })
 
   window.hermesAPI.onError((err) => {
@@ -360,13 +522,16 @@ function sendMessage() {
     if (!accumulated) bubble.innerHTML = `<span style="color:#e88">\u26A0 ${escapeHtml(err)}</span>`
     showError(err)
     isStreaming = false
+    userScrolledUp = false
     setSendEnabled(true)
+    hideScrollButton()
   })
 
   window.hermesAPI.sendMessage(
     chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
     settings,
-    chat.sessionId
+    chat.sessionId,
+    chat.id  // pass chatId for concurrency guard
   )
 }
 
@@ -382,10 +547,21 @@ msgInput.addEventListener('input', () => {
   setSendEnabled((msgInput.value.trim().length > 0 || attachedFiles.length > 0) && !isStreaming)
 })
 
+// ─── Send key preference ─────────────────────────────────────────────────────
+
 msgInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    if (!sendBtn.disabled) sendMessage()
+  if (settings.sendKey === 'ctrl-enter') {
+    // Ctrl+Enter sends, plain Enter inserts newline
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault()
+      if (!sendBtn.disabled) sendMessage()
+    }
+  } else {
+    // Default: Enter sends, Shift+Enter inserts newline
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      if (!sendBtn.disabled) sendMessage()
+    }
   }
 })
 
@@ -489,6 +665,7 @@ const settingsOverlay = document.getElementById('settings-overlay')
 const sEndpoint = document.getElementById('s-endpoint')
 const sApiKey   = document.getElementById('s-apikey')
 const sModel    = document.getElementById('s-model')
+const sSendKey  = document.getElementById('s-sendkey')
 const connDot   = document.getElementById('conn-dot')
 const connLabel = document.getElementById('conn-label')
 
@@ -502,6 +679,7 @@ function openSettings() {
   sEndpoint.value = settings.endpoint
   sApiKey.value   = settings.apiKey
   sModel.value    = settings.model
+  if (sSendKey) sSendKey.value = settings.sendKey || 'enter'
   setConnStatus('grey', 'Not tested')
   settingsOverlay.classList.add('open')
 }
@@ -512,6 +690,7 @@ function saveSettings() {
   settings.endpoint = sEndpoint.value.trim() || DEFAULT_SETTINGS.endpoint
   settings.apiKey   = sApiKey.value.trim()   || DEFAULT_SETTINGS.apiKey
   settings.model    = sModel.value.trim()    || DEFAULT_SETTINGS.model
+  if (sSendKey) settings.sendKey = sSendKey.value
   saveState()
   syncModelPill()
   closeSettings()

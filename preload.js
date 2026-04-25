@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('hermesAPI', {
-  sendMessage: (messages, settings, sessionId) => {
-    ipcRenderer.send('chat-stream', { messages, settings, sessionId })
+  sendMessage: (messages, settings, sessionId, chatId) => {
+    ipcRenderer.send('chat-stream', { messages, settings, sessionId, chatId })
   },
   cancelStream: () => {
     ipcRenderer.send('chat-cancel')

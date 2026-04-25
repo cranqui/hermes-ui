@@ -30,7 +30,7 @@ function createWindow() {
   })
 }
 
-// ─── CSP: tighten for security ──────────────────────────────────────────
+// ─── CSP + Security Headers ───────────────────────────────────────────
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -49,6 +49,9 @@ app.whenReady().then(() => {
           "form-action 'none'; " +
           "frame-ancestors 'none'"
         ],
+        'X-Content-Type-Options': ['nosniff'],
+        'X-Frame-Options': ['DENY'],
+        'Referrer-Policy': ['no-referrer'],
       },
     })
   })
@@ -76,8 +79,16 @@ process.on('unhandledRejection', (reason) => {
 
 // Track active requests so we can cancel on chat switch
 let activeRequest = null
+let activeChatId = null  // Track which chat is currently streaming
 
-ipcMain.on('chat-stream', (event, { messages, settings, sessionId }) => {
+ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => {
+  // ── Concurrency guard ──────────────────────────────────────────────
+  // Reject if this chat is already streaming
+  if (activeChatId === chatId) {
+    event.sender.send('chat-stream-error', 'A message is already being sent in this chat.')
+    return
+  }
+
   const { endpoint, apiKey, model } = settings
   const url = new URL(endpoint)
   const isHttps = url.protocol === 'https:'
@@ -135,6 +146,7 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId }) => {
         if (data === '[DONE]') {
           if (!doneSent) {
             doneSent = true
+            activeChatId = null
             event.sender.send('chat-stream-done')
           }
           return
@@ -159,6 +171,7 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId }) => {
     res.on('end', () => {
       if (!doneSent) {
         doneSent = true
+        activeChatId = null
         event.sender.send('chat-stream-done')
       }
       if (activeRequest === req) activeRequest = null
@@ -167,6 +180,7 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId }) => {
     res.on('error', (err) => {
       if (!doneSent) {
         doneSent = true
+        activeChatId = null
         event.sender.send('chat-stream-error', err.message)
       }
       if (activeRequest === req) activeRequest = null
@@ -175,12 +189,14 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId }) => {
 
   req.on('error', (err) => {
     event.sender.send('chat-stream-error', err.message)
+    activeChatId = null
     if (activeRequest === req) activeRequest = null
   })
 
   req.write(body)
   req.end()
   activeRequest = req
+  activeChatId = chatId  // Mark this chat as streaming
 })
 
 // Cancel active stream when user switches chats
@@ -189,6 +205,7 @@ ipcMain.on('chat-cancel', () => {
     try { activeRequest.destroy() } catch (_) {}
     activeRequest = null
   }
+  activeChatId = null
 })
 
 // ─── IPC: Fetch real model info from Hermes config + Ollama ────────────

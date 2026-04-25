@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src http://localhost:8642 http://127.0.0.1:8642; font-src 'self';" />
   <title>Hermes Chat</title>
   <!-- All scripts are external to satisfy script-src 'self' CSP -->
   <script src="node_modules/marked/marked.min.js"></script>
   <script src="node_modules/dompurify/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="node_modules/highlight.js/styles/github.min.css">
+  <script src="vendor/hljs.bundle.js"></script>
   <style>
     /* ── Reset & Base ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -84,6 +85,25 @@
     #new-chat-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
     #new-chat-btn svg { flex-shrink: 0; }
 
+    /* Chat search */
+    #chat-search-wrap {
+      padding: 4px 10px 6px;
+    }
+    #chat-search {
+      width: 100%;
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: var(--font);
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #chat-search:focus { border-color: #a0a0a0; }
+    #chat-search::placeholder { color: var(--text-dim); }
+
     /* Section label (e.g. "This week") */
     .chat-section-label {
       font-size: 11px; font-weight: 500;
@@ -147,6 +167,7 @@
     #main {
       flex: 1; display: flex; flex-direction: column;
       min-width: 0; background: var(--bg-main);
+      position: relative;
     }
 
     /* ── Topbar ── */
@@ -214,15 +235,56 @@
     .msg-bubble p { margin: 0 0 10px; }
     .msg-bubble p:last-child { margin-bottom: 0; }
 
+    /* ── Code blocks with header + copy ── */
     .msg-bubble pre {
       background: #f4f4f5;
       border: 1px solid #e4e4e7;
       border-radius: 10px;
-      padding: 14px 16px;
+      padding: 0;
       overflow-x: auto;
       margin: 10px 0;
       font-size: 12.5px; line-height: 1.55;
     }
+
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 12px;
+      background: #eaeaed;
+      border-bottom: 1px solid #e4e4e7;
+      border-radius: 10px 10px 0 0;
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font);
+    }
+
+    .code-lang {
+      font-weight: 500;
+      text-transform: lowercase;
+    }
+
+    .code-copy-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      padding: 2px 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      transition: background 0.12s, color 0.12s;
+    }
+    .code-copy-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    .msg-bubble pre code {
+      display: block;
+      padding: 14px 16px;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      overflow-x: auto;
+    }
+
     .msg-bubble code {
       font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
       font-size: 12.5px;
@@ -270,6 +332,32 @@
       margin-left: 1px;
       opacity: 0.5;
     }
+
+    /* ── Scroll to bottom button ── */
+    #scroll-to-bottom {
+      position: absolute;
+      bottom: 120px;
+      right: 28px;
+      width: 36px; height: 36px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-secondary);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.2s, transform 0.2s, color 0.12s;
+      z-index: 50;
+      pointer-events: none;
+    }
+    #scroll-to-bottom.visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    #scroll-to-bottom:hover { color: var(--text-primary); }
 
     /* ── Welcome screen ── */
     #welcome {
@@ -345,6 +433,7 @@
       resize: none; max-height: 180px; min-height: 24px;
       line-height: 1.6; overflow-y: auto;
       margin-bottom: 10px;
+      transition: height 0.1s ease;
     }
     #message-input::placeholder { color: var(--text-dim); }
     #message-input::-webkit-scrollbar { width: 4px; }
@@ -446,14 +535,31 @@
       color: var(--text-secondary); text-transform: uppercase;
       letter-spacing: 0.07em;
     }
-    .setting-group input {
+    .setting-group input, .setting-group select {
       background: var(--bg-input); border: 1px solid var(--border);
       border-radius: 8px; padding: 9px 12px;
       color: var(--text-primary); font-size: 14px;
       font-family: var(--font); outline: none;
       transition: border-color 0.15s;
     }
-    .setting-group input:focus { border-color: #a0a0a0; }
+    .setting-group input:focus, .setting-group select:focus { border-color: #a0a0a0; }
+
+    .setting-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 0;
+    }
+    .setting-row label {
+      font-size: 13px;
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+    .setting-row select {
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 10px;
+      color: var(--text-primary); font-size: 13px;
+      font-family: var(--font); outline: none;
+      cursor: pointer;
+    }
 
     #settings-actions {
       display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;
@@ -544,6 +650,10 @@
       New chat
     </button>
 
+    <div id="chat-search-wrap">
+      <input type="text" id="chat-search" placeholder="Search chats…" />
+    </div>
+
     <div id="chat-list"></div>
 
     <div id="sidebar-footer">
@@ -572,6 +682,13 @@
 
     <!-- Message list (hidden until a chat is active) -->
     <div id="messages" style="display:none;"></div>
+
+    <!-- Scroll to bottom button -->
+    <button id="scroll-to-bottom" title="Scroll to bottom">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
 
     <div id="input-area">
       <!-- Attached file chips appear here -->
@@ -650,6 +767,14 @@
     <div class="setting-group">
       <label>Model</label>
       <input id="s-model" type="text" placeholder="hermes-agent" />
+    </div>
+
+    <div class="setting-row">
+      <label>Send with</label>
+      <select id="s-sendkey">
+        <option value="enter">Enter key</option>
+        <option value="ctrl-enter">Ctrl + Enter</option>
+      </select>
     </div>
 
     <div id="connection-status">
