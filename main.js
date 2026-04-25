@@ -456,15 +456,25 @@ function cleanupStream(streamId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LEGACY IPC (kept for fallback — renderer can use proxy or IPC)
+// LEGACY IPC — Consolidated single-channel events (typed payloads)
 // ═══════════════════════════════════════════════════════════════════════════════
+// Instead of 7 separate IPC channels (chat-stream-chunk, -done, -error, -usage,
+// -model, -session, chat-cancel), we now use a single 'chat-event' channel.
+// Each event has a `type` field and a `payload` field. The renderer handles them
+// via one listener with a switch statement — no listener accumulation possible.
+//
+// Event types: chunk, done, error, usage, model, session
 
 let activeRequest = null
 let activeChatId = null
 
+function sendChatEvent(event, type, payload) {
+  event.sender.send('chat-event', { type, payload })
+}
+
 ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => {
   if (activeChatId === chatId) {
-    event.sender.send('chat-stream-error', 'A message is already being sent in this chat.')
+    sendChatEvent(event, 'error', { message: 'A message is already being sent in this chat.' })
     return
   }
 
@@ -500,11 +510,6 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
     headers,
   }
 
-  if (activeRequest) {
-    try { activeRequest.destroy() } catch (_) {}
-    activeRequest = null
-  }
-
   let doneSent = false
 
   const req = transport.request(options, (apiRes) => {
@@ -523,18 +528,18 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
           if (!doneSent) {
             doneSent = true
             activeChatId = null
-            event.sender.send('chat-stream-done')
+            sendChatEvent(event, 'done', {})
           }
           return
         }
         try {
           const parsed = JSON.parse(data)
           const delta = parsed.choices?.[0]?.delta?.content
-          if (delta) event.sender.send('chat-stream-chunk', delta)
-          if (parsed.usage) event.sender.send('chat-stream-usage', parsed.usage)
-          if (parsed.model) event.sender.send('chat-stream-model', parsed.model)
+          if (delta) sendChatEvent(event, 'chunk', { content: delta })
+          if (parsed.usage) sendChatEvent(event, 'usage', parsed.usage)
+          if (parsed.model) sendChatEvent(event, 'model', { model: parsed.model })
           const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
-          if (sid) event.sender.send('chat-stream-session', sid)
+          if (sid) sendChatEvent(event, 'session', { sessionId: sid })
         } catch (_) {}
       }
     })
@@ -543,7 +548,7 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
       if (!doneSent) {
         doneSent = true
         activeChatId = null
-        event.sender.send('chat-stream-done')
+        sendChatEvent(event, 'done', {})
       }
       if (activeRequest === req) activeRequest = null
     })
@@ -552,14 +557,14 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
       if (!doneSent) {
         doneSent = true
         activeChatId = null
-        event.sender.send('chat-stream-error', err.message)
+        sendChatEvent(event, 'error', { message: err.message })
       }
       if (activeRequest === req) activeRequest = null
     })
   })
 
   req.on('error', (err) => {
-    event.sender.send('chat-stream-error', err.message)
+    sendChatEvent(event, 'error', { message: err.message })
     activeChatId = null
     if (activeRequest === req) activeRequest = null
   })

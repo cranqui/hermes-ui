@@ -118,25 +118,25 @@ contextBridge.exposeInMainWorld('hermesAPI', {
   // Model info (still via IPC — no streaming needed)
   getModelInfo: () => ipcRenderer.invoke('get-model-info'),
 
-  // ─── Legacy IPC (fallback) ──────────────────────────────────────────
-  sendMessage: (messages, settings, sessionId, chatId) => {
+  // ─── Consolidated IPC event listener ──────────────────────────────────
+  // Single channel replaces the old 7 separate listeners (onChunk, onDone,
+  // onError, onUsage, onModel, onSession, removeAllListeners).
+  // The renderer registers ONE callback that receives { type, payload }.
+  // No listener accumulation possible — replacing the callback is safe.
+
+  onChatEvent: (callback) => {
+    // Remove any previous listener to prevent accumulation
+    ipcRenderer.removeAllListeners('chat-event')
+    ipcRenderer.on('chat-event', (_event, data) => callback(data))
+  },
+
+  // Legacy: send message via IPC (used as fallback if proxy is unavailable)
+  sendMessageIPC: (messages, settings, sessionId, chatId) => {
     ipcRenderer.send('chat-stream', { messages, settings, sessionId, chatId })
   },
+
+  // Cancel via IPC
   cancelStreamIPC: () => {
     ipcRenderer.send('chat-cancel')
-  },
-  onChunk: (cb) => ipcRenderer.on('chat-stream-chunk', (_e, chunk) => cb(chunk)),
-  onDone: (cb) => ipcRenderer.on('chat-stream-done', (_e) => cb()),
-  onError: (cb) => ipcRenderer.on('chat-stream-error', (_e, err) => cb(err)),
-  onSession: (cb) => ipcRenderer.on('chat-stream-session', (_e, sid) => cb(sid)),
-  onModel: (cb) => ipcRenderer.on('chat-stream-model', (_e, model) => cb(model)),
-  onUsage: (cb) => ipcRenderer.on('chat-stream-usage', (_e, usage) => cb(usage)),
-  removeAllListeners: () => {
-    ipcRenderer.removeAllListeners('chat-stream-chunk')
-    ipcRenderer.removeAllListeners('chat-stream-done')
-    ipcRenderer.removeAllListeners('chat-stream-error')
-    ipcRenderer.removeAllListeners('chat-stream-session')
-    ipcRenderer.removeAllListeners('chat-stream-model')
-    ipcRenderer.removeAllListeners('chat-stream-usage')
   },
 })

@@ -646,46 +646,44 @@ function startIPCStream(chat, bubble) {
   let accumulated = ''
   const messageList = chat.messages.filter(m => m.role === 'user' || m.role === 'assistant')
 
-  window.hermesAPI.removeAllListeners()
-
-  window.hermesAPI.onChunk((chunk) => {
-    accumulated += chunk
-    bubble.innerHTML = renderStreamChunk(accumulated)
-    bubble.classList.add('typing-cursor')
-    highlightCodeBlocks(bubble)
-    if (!userScrolledUp) scrollToBottom()
-    // Update inflight snapshot (throttled)
-    throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated)
-  })
-
-  window.hermesAPI.onModel((model) => {
-    if (model) { realModel = model; syncModelPill(); updateContextPill() }
-  })
-
-  window.hermesAPI.onSession((sid) => {
-    if (sid && chat) { chat.sessionId = sid; saveState() }
-  })
-
-  window.hermesAPI.onUsage((usage) => {
-    if (usage && usage.prompt_tokens != null) {
-      contextUsed = usage.prompt_tokens
-      updateContextPill()
+  // Single consolidated listener — replaces old 7 separate IPC listeners
+  // No listener accumulation possible: onChatEvent replaces the previous callback
+  window.hermesAPI.onChatEvent(({ type, payload }) => {
+    switch (type) {
+      case 'chunk':
+        accumulated += payload.content
+        bubble.innerHTML = renderStreamChunk(accumulated)
+        bubble.classList.add('typing-cursor')
+        highlightCodeBlocks(bubble)
+        if (!userScrolledUp) scrollToBottom()
+        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated)
+        break
+      case 'model':
+        if (payload.model) { realModel = payload.model; syncModelPill(); updateContextPill() }
+        break
+      case 'session':
+        if (payload.sessionId && chat) { chat.sessionId = payload.sessionId; saveState() }
+        break
+      case 'usage':
+        if (payload && payload.prompt_tokens != null) {
+          contextUsed = payload.prompt_tokens
+          updateContextPill()
+        }
+        break
+      case 'done':
+        if (streamDone) return
+        streamDone = true
+        finishStream(bubble, accumulated, chat)
+        break
+      case 'error':
+        if (streamDone) return
+        streamDone = true
+        errorStream(bubble, accumulated, payload.message || 'Unknown error')
+        break
     }
   })
 
-  window.hermesAPI.onDone(() => {
-    if (streamDone) return
-    streamDone = true
-    finishStream(bubble, accumulated, chat)
-  })
-
-  window.hermesAPI.onError((err) => {
-    if (streamDone) return
-    streamDone = true
-    errorStream(bubble, accumulated, err)
-  })
-
-  window.hermesAPI.sendMessage(
+  window.hermesAPI.sendMessageIPC(
     chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
     settings,
     chat.sessionId,
