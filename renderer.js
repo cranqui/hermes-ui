@@ -861,9 +861,14 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
         streamDone = true
         finishStream(bubble, accumulated, chat)
       },
-      onError: (err) => {
+      onError: (err, payload) => {
         if (streamDone) return
         streamDone = true
+        // Session expired → clear sessionId so next request starts fresh
+        if (payload && payload.sessionExpired && chat) {
+          chat.sessionId = null
+          saveActiveChat()
+        }
         errorStream(bubble, accumulated, err)
       },
     })
@@ -913,6 +918,11 @@ function startIPCStream(chat, bubble) {
       case 'error':
         if (streamDone) return
         streamDone = true
+        // Session expired → clear sessionId so next request starts fresh
+        if (payload && payload.sessionExpired && chat) {
+          chat.sessionId = null
+          saveActiveChat()
+        }
         errorStream(bubble, accumulated, payload.message || 'Unknown error')
         break
     }
@@ -956,13 +966,64 @@ function errorStream(bubble, accumulated, err) {
   clearInflight()
   _inflightThrottleSlot = null
   bubble.classList.remove('typing-cursor')
-  if (!accumulated) bubble.innerHTML = `<span style="color:#e88">\u26A0 ${escapeHtml(err)}</span>`
+
+  // If we have partial content, render it + show an error bar with Resend
+  if (accumulated && accumulated.trim()) {
+    bubble.innerHTML = renderMarkdown(accumulated)
+    highlightCodeBlocks(bubble)
+    renderMath(bubble)
+
+    // Append an error bar after the bubble
+    const row = bubble.closest('.msg-row')
+    const errBar = document.createElement('div')
+    errBar.className = 'msg-error-bar'
+    errBar.innerHTML = `<span class="msg-error-text">⚠ ${escapeHtml(err)}</span><button class="msg-resend-btn">Resend</button>`
+    row.appendChild(errBar)
+    errBar.querySelector('.msg-resend-btn').addEventListener('click', () => {
+      errBar.remove()
+      resendLastUserMessage()
+    })
+  } else {
+    bubble.innerHTML = `<span style="color:#e88">⚠ ${escapeHtml(err)}</span>`
+  }
+
   showError(err)
   isStreaming = false
   userScrolledUp = false
   activeStreamCtrl = null
   setSendEnabled(true)
   hideScrollButton()
+}
+
+// Resend the last user message (after an error with partial content)
+function resendLastUserMessage() {
+  const chat = getActiveChat()
+  if (!chat) return
+  // Find last user message
+  const lastUserIdx = chat.messages.findLastIndex(m => m.role === 'user')
+  if (lastUserIdx < 0) return
+
+  // Remove any partial assistant messages after the last user message
+  chat.messages = chat.messages.slice(0, lastUserIdx + 1)
+  saveActiveChat()
+  renderMessages()
+
+  // Re-send using the existing message list
+  const text = chat.messages[lastUserIdx].content
+  if (isStreaming) return
+
+  isStreaming = true
+  userScrolledUp = false
+  setSendEnabled(false)
+  resetStreamState()
+  let streamDone = false
+  let accumulated = ''
+  const bubble = appendMessageBubble('assistant', '', true)
+
+  const messageList = chat.messages.filter(m => m.role === 'user' || m.role === 'assistant')
+  saveInflight(chat.id, messageList, chat.sessionId, '', realModel || null)
+
+  startProxyStream(chat, bubble, accumulated, streamDone)
 }
 
 // Cancel current stream (called when switching chats or on explicit cancel)
@@ -1350,14 +1411,32 @@ async function checkTopbarConnection() {
     const res = await fetch(healthUrl, { method: 'GET', signal: AbortSignal.timeout(5000) })
     if (res.ok) {
       updateTopbarDot('green')
-      isConnected = true
+      updateConnectionStatus(true)
     } else {
       updateTopbarDot('red')
-      isConnected = false
+      updateConnectionStatus(false)
     }
   } catch (_) {
     updateTopbarDot('red')
-    isConnected = false
+    updateConnectionStatus(false)
+  }
+}
+
+// Offline detection: disable input + show "No connection" banner
+function updateConnectionStatus(online) {
+  const wasConnected = isConnected
+  isConnected = online
+  const banner = document.getElementById('offline-banner')
+  if (online) {
+    banner.style.display = 'none'
+    setSendEnabled(msgInput.value.trim().length > 0 && !isStreaming)
+  } else {
+    banner.style.display = 'flex'
+    setSendEnabled(false)
+  }
+  // Auto-reconnect check every 15s when offline
+  if (!online && !wasConnected) {
+    setTimeout(() => { if (!isConnected) checkTopbarConnection() }, 15000)
   }
 }
 

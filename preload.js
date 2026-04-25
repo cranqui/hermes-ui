@@ -62,9 +62,9 @@ contextBridge.exposeInMainWorld('hermesAPI', {
       if (e.data) {
         try {
           const data = JSON.parse(e.data)
-          if (callbacks.onError) callbacks.onError(data.message || 'Stream error')
+          if (callbacks.onError) callbacks.onError(data.message || 'Stream error', data)
         } catch (_) {
-          if (callbacks.onError) callbacks.onError('Stream error')
+          if (callbacks.onError) callbacks.onError('Stream error', {})
         }
         es.close()
         if (callbacks.onDone) callbacks.onDone()
@@ -77,7 +77,7 @@ contextBridge.exposeInMainWorld('hermesAPI', {
         return
       }
       // readyState is CLOSED (2) — real failure
-      if (callbacks.onError) callbacks.onError('Connection lost')
+      if (callbacks.onError) callbacks.onError('Connection lost', {})
       es.close()
       if (callbacks.onDone) callbacks.onDone()
     })

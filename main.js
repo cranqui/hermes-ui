@@ -362,6 +362,26 @@ function startHermesRequest(streamState, params) {
   let doneSent = false
 
   const req = transport.request(options, (apiRes) => {
+    // Handle non-2xx status codes immediately
+    if (apiRes.statusCode < 200 || apiRes.statusCode >= 300) {
+      let errBody = ''
+      apiRes.on('data', (chunk) => { errBody += chunk.toString() })
+      apiRes.on('end', () => {
+        if (!doneSent) {
+          doneSent = true
+          streamState.done = true
+          let msg = `HTTP ${apiRes.statusCode}`
+          try { const j = JSON.parse(errBody); msg = j.error?.message || j.error || j.message || msg } catch (_) {}
+          if (apiRes.statusCode === 401 || apiRes.statusCode === 403) msg = `Authentication failed (${apiRes.statusCode})`
+          if (apiRes.statusCode === 404) msg = 'Session expired or not found. Start a new chat or resend.'
+          streamState.error = msg
+          pushEvent(streamState, 'error', { message: msg, statusCode: apiRes.statusCode, sessionExpired: apiRes.statusCode === 404 })
+          setTimeout(() => cleanupStream(streamState.streamId), 60000)
+        }
+      })
+      return
+    }
+
     // Set response timeout: if no data arrives for 120s, destroy the connection
     apiRes.setTimeout(120_000, () => {
       if (!doneSent) {
@@ -562,6 +582,24 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
   let doneSent = false
 
   const req = transport.request(options, (apiRes) => {
+    // Handle non-2xx status codes immediately
+    if (apiRes.statusCode < 200 || apiRes.statusCode >= 300) {
+      let errBody = ''
+      apiRes.on('data', (chunk) => { errBody += chunk.toString() })
+      apiRes.on('end', () => {
+        if (!doneSent) {
+          doneSent = true
+          activeChatId = null
+          let msg = `HTTP ${apiRes.statusCode}`
+          try { const j = JSON.parse(errBody); msg = j.error?.message || j.error || j.message || msg } catch (_) {}
+          if (apiRes.statusCode === 401 || apiRes.statusCode === 403) msg = `Authentication failed (${apiRes.statusCode})`
+          if (apiRes.statusCode === 404) msg = 'Session expired or not found. Start a new chat or resend.'
+          sendChatEvent(event, 'error', { message: msg, statusCode: apiRes.statusCode, sessionExpired: apiRes.statusCode === 404 })
+        }
+      })
+      return
+    }
+
     // Response timeout: 120s between data chunks
     apiRes.setTimeout(120_000, () => {
       if (!doneSent) {
