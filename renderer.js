@@ -1239,3 +1239,12 @@ window.addEventListener('beforeunload', () => {
     if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated, s.model)
   }
 })
+
+// ─── Global error boundaries ─────────────────────────────────────────────────
+// Catch unhandled promise rejections so they show as error toasts instead of
+// silently disappearing in the devtools console.
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[Hermes Chat] Unhandled promise rejection:', event.reason)
+  const msg = event.reason instanceof Error ? event.reason.message : String(event.reason)
+  showError(msg)
+})

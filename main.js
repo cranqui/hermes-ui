@@ -32,6 +32,29 @@ function createWindow() {
     shell.openExternal(url)
     return { action: 'deny' }
   })
+
+  // ── Error boundaries ──────────────────────────────────────────────────
+  // If the renderer process crashes, auto-reload it (localStorage is preserved)
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Hermes Chat] Renderer process gone:', details.reason, details.exitCode)
+    if (details.reason !== 'clean-exit') {
+      // Small delay to let the OS clean up, then reload
+      setTimeout(() => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.loadFile('index.html')
+          console.log('[Hermes Chat] Renderer reloaded after crash')
+        }
+      }, 1000)
+    }
+  })
+
+  // Log unresponsive events (don't force-reload — it might recover)
+  mainWindow.on('unresponsive', () => {
+    console.warn('[Hermes Chat] Window became unresponsive — waiting for recovery')
+  })
+  mainWindow.on('responsive', () => {
+    console.log('[Hermes Chat] Window recovered from unresponsive state')
+  })
 }
 
 // ─── CSP + Security Headers ───────────────────────────────────────────
@@ -75,6 +98,11 @@ app.on('window-all-closed', () => {
 // Prevent uncaught errors from crashing the app
 process.on('uncaughtException', (err) => {
   console.error('[Hermes Chat] Uncaught exception:', err)
+  // Show a dialog for truly unexpected errors so the user knows something went wrong
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const { dialog } = require('electron')
+    dialog.showErrorBox('Unexpected Error', `${err.message}\n\nThe app will continue running, but you may want to restart it.`)
+  }
 })
 
 process.on('unhandledRejection', (reason) => {
@@ -334,6 +362,16 @@ function startHermesRequest(streamState, params) {
   let doneSent = false
 
   const req = transport.request(options, (apiRes) => {
+    // Set response timeout: if no data arrives for 120s, destroy the connection
+    apiRes.setTimeout(120_000, () => {
+      if (!doneSent) {
+        doneSent = true
+        streamState.done = true
+        streamState.error = 'Response timed out (120s)'
+        pushEvent(streamState, 'error', { message: 'Response timed out (120s)' })
+        req.destroy()
+      }
+    })
     let buffer = ''
 
     apiRes.on('data', (chunk) => {
@@ -410,6 +448,17 @@ function startHermesRequest(streamState, params) {
       streamState.error = err.message
       pushEvent(streamState, 'error', { message: err.message })
       setTimeout(() => cleanupStream(streamState.streamId), 60000)
+    }
+  })
+
+  // Connection timeout: 30s to establish connection, 120s between data chunks
+  req.setTimeout(30_000, () => {
+    if (!doneSent) {
+      doneSent = true
+      streamState.done = true
+      streamState.error = 'Connection timed out (30s)'
+      pushEvent(streamState, 'error', { message: 'Connection timed out (30s)' })
+      req.destroy()
     }
   })
 
@@ -513,6 +562,17 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
   let doneSent = false
 
   const req = transport.request(options, (apiRes) => {
+    // Response timeout: 120s between data chunks
+    apiRes.setTimeout(120_000, () => {
+      if (!doneSent) {
+        doneSent = true
+        activeChatId = null
+        sendChatEvent(event, 'error', { message: 'Response timed out (120s)' })
+      }
+      if (activeRequest === req) activeRequest = null
+      req.destroy()
+    })
+
     let buffer = ''
 
     apiRes.on('data', (chunk) => {
@@ -567,6 +627,17 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
     sendChatEvent(event, 'error', { message: err.message })
     activeChatId = null
     if (activeRequest === req) activeRequest = null
+  })
+
+  // Connection timeout: 30s to establish connection
+  req.setTimeout(30_000, () => {
+    if (!doneSent) {
+      doneSent = true
+      sendChatEvent(event, 'error', { message: 'Connection timed out (30s)' })
+      activeChatId = null
+      if (activeRequest === req) activeRequest = null
+    }
+    req.destroy()
   })
 
   req.write(body)
