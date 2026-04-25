@@ -39,6 +39,97 @@ let realModel = null     // e.g. "glm-5.1:cloud"
 let contextWindow = null // e.g. 202752
 let contextUsed = null   // prompt_tokens from last response
 
+// ─── Inflight state persistence ─────────────────────────────────────────────
+// If Electron crashes or the renderer dies mid-stream, we want to recover the
+// partial conversation on next boot. We save a snapshot before each request
+// and update it as content streams in. On clean completion, we clear it.
+// On boot, if we find an inflight snapshot, we restore the partial assistant
+// message and mark it [interrupted] so the user knows it wasn't finished.
+
+const INFLIGHT_KEY = 'hermes_inflight'
+
+function saveInflight(chatId, messages, sessionId, accumulated) {
+  const snapshot = {
+    chatId,
+    messages,        // array of {role, content} — up to and including the user's last message
+    sessionId,
+    accumulated,     // partial assistant content so far (empty string on request start)
+    timestamp: Date.now(),
+  }
+  try {
+    localStorage.setItem(INFLIGHT_KEY, JSON.stringify(snapshot))
+  } catch (_) {}
+}
+
+function clearInflight() {
+  try { localStorage.removeItem(INFLIGHT_KEY) } catch (_) {}
+}
+
+function loadInflight() {
+  try {
+    const raw = localStorage.getItem(INFLIGHT_KEY)
+    if (!raw) return null
+    const snapshot = JSON.parse(raw)
+    // Discard if older than 24 hours (stale)
+    if (Date.now() - snapshot.timestamp > 24 * 60 * 60 * 1000) {
+      clearInflight()
+      return null
+    }
+    return snapshot
+  } catch (_) {
+    return null
+  }
+}
+
+function recoverInflight() {
+  const snapshot = loadInflight()
+  if (!snapshot) return
+
+  // Find the chat this inflight belongs to
+  let chat = chats.find(c => c.id === snapshot.chatId)
+  if (!chat) {
+    // Chat was deleted — discard
+    clearInflight()
+    return
+  }
+
+  // Check if the messages already include the assistant response
+  // (edge case: stream completed but clearInflight failed)
+  const lastMsg = chat.messages[chat.messages.length - 1]
+  if (lastMsg && lastMsg.role === 'assistant') {
+    clearInflight()
+    return
+  }
+
+  // Verify the user message is still the last user message in the chat
+  const chatUserMsgs = chat.messages.filter(m => m.role === 'user')
+  const snapshotUserMsgs = snapshot.messages.filter(m => m.role === 'user')
+  if (chatUserMsgs.length < snapshotUserMsgs.length) {
+    // Messages were lost — restore from snapshot
+    chat.messages = snapshot.messages.slice()
+  }
+
+  // If we have accumulated content, add it as an interrupted assistant message
+  if (snapshot.accumulated && snapshot.accumulated.trim()) {
+    chat.messages.push({
+      role: 'assistant',
+      content: snapshot.accumulated + '\n\n— *Response interrupted (app restarted)*',
+    })
+  }
+
+  // Restore session ID if we had one
+  if (snapshot.sessionId) {
+    chat.sessionId = snapshot.sessionId
+  }
+
+  // Set this chat as active
+  activeChatId = chat.id
+  saveState()
+  clearInflight()
+
+  console.log(`[Hermes] Recovered inflight state for chat "${chat.title}" (${snapshot.accumulated.length} chars recovered)`)
+}
+
 // ─── Marked initialisation (once, fixed for v5–v12 API) ─────────────────────
 
 let _markedReady = false
@@ -467,18 +558,42 @@ function sendMessage() {
   let accumulated = ''
   const bubble = appendMessageBubble('assistant', '', true)
 
+  // ── Save inflight snapshot before request (crash recovery) ──────────
+  saveInflight(
+    chat.id,
+    chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
+    chat.sessionId,
+    ''
+  )
+
   // ── Proxy stream (primary) ──────────────────────────────────────────────
   // Try the local HTTP proxy first; fall back to legacy IPC if proxy is down
   startProxyStream(chat, bubble, accumulated, streamDone)
 }
 
+// Throttle inflight saves to every 500ms during streaming (avoid localStorage thrash)
+let _inflightThrottleTimer = null
+
+function throttledSaveInflight(chatId, messages, sessionId, accumulated) {
+  // Always save the latest values into the throttle slot
+  _inflightThrottleSlot = { chatId, messages, sessionId, accumulated }
+  if (_inflightThrottleTimer) return
+  _inflightThrottleTimer = setTimeout(() => {
+    const s = _inflightThrottleSlot
+    if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated)
+    _inflightThrottleTimer = null
+  }, 500)
+}
+let _inflightThrottleSlot = null
+
 async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
   let streamDone = _streamDone
   let accumulated = _accumulated
+  const messageList = chat.messages.filter(m => m.role === 'user' || m.role === 'assistant')
 
   try {
     const streamId = await window.hermesAPI.startStream(
-      chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
+      messageList,
       settings,
       chat.sessionId,
       chat.id
@@ -491,6 +606,8 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
         bubble.classList.add('typing-cursor')
         highlightCodeBlocks(bubble)
         if (!userScrolledUp) scrollToBottom()
+        // Update inflight snapshot (throttled)
+        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated)
       },
       onModel: (model) => {
         if (model) { realModel = model; syncModelPill(); updateContextPill() }
@@ -527,6 +644,7 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
 function startIPCStream(chat, bubble) {
   let streamDone = false
   let accumulated = ''
+  const messageList = chat.messages.filter(m => m.role === 'user' || m.role === 'assistant')
 
   window.hermesAPI.removeAllListeners()
 
@@ -536,6 +654,8 @@ function startIPCStream(chat, bubble) {
     bubble.classList.add('typing-cursor')
     highlightCodeBlocks(bubble)
     if (!userScrolledUp) scrollToBottom()
+    // Update inflight snapshot (throttled)
+    throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated)
   })
 
   window.hermesAPI.onModel((model) => {
@@ -574,6 +694,8 @@ function startIPCStream(chat, bubble) {
 }
 
 function finishStream(bubble, accumulated, chat) {
+  clearInflight()
+  _inflightThrottleSlot = null
   bubble.classList.remove('typing-cursor')
   bubble.innerHTML = renderMarkdown(accumulated)
   highlightCodeBlocks(bubble)
@@ -589,6 +711,8 @@ function finishStream(bubble, accumulated, chat) {
 }
 
 function errorStream(bubble, accumulated, err) {
+  clearInflight()
+  _inflightThrottleSlot = null
   bubble.classList.remove('typing-cursor')
   if (!accumulated) bubble.innerHTML = `<span style="color:#e88">\u26A0 ${escapeHtml(err)}</span>`
   showError(err)
@@ -601,6 +725,8 @@ function errorStream(bubble, accumulated, err) {
 
 // Cancel current stream (called when switching chats or on explicit cancel)
 function cancelCurrentStream() {
+  clearInflight()
+  _inflightThrottleSlot = null
   if (activeStreamCtrl) {
     activeStreamCtrl.close()
     activeStreamCtrl = null
@@ -838,6 +964,7 @@ async function fetchModelInfo() {
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 loadState()
+recoverInflight()  // Restore partial conversation if app crashed mid-stream
 syncModelPill()
 fetchModelInfo()
 renderSidebar()
@@ -845,3 +972,12 @@ renderMessages()
 updateTopbar()
 updateContextPill()
 setTimeout(() => msgInput.focus(), 100)
+
+// Flush inflight state before page unload (handles clean Electron close mid-stream)
+window.addEventListener('beforeunload', () => {
+  if (isStreaming && _inflightThrottleSlot) {
+    // Force-flush the throttled inflight save
+    const s = _inflightThrottleSlot
+    if (s) saveInflight(s.chatId, s.messages, s.sessionId, s.accumulated)
+  }
+})
