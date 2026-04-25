@@ -1,6 +1,7 @@
 // ─── Guard: mark libraries as missing if npm install hasn't been run ─────────
 if (typeof marked    === 'undefined') window._markedLoadFailed    = true
 if (typeof DOMPurify === 'undefined') window._domPurifyLoadFailed = true
+if (typeof katex     === 'undefined') window._katexLoadFailed      = true
 
 // ─── Minimal Markdown fallback (used if marked fails to load) ────────────────
 window._simpleMarkdown = function simpleMarkdown(text) {
@@ -235,6 +236,35 @@ function highlightCodeBlocks(container) {
         pre.insertBefore(header, block)
       }
     })
+  }
+}
+
+// ─── KaTeX math rendering ─────────────────────────────────────────────────
+// Renders $inline$ and $$display$$ math inside a DOM container.
+// Only called on final renders (finishStream, renderMessages) — NOT during
+// streaming, to avoid flicker (KaTeX replaces text nodes which get wiped on
+// the next innerHTML update). Raw $...$ is readable enough mid-stream.
+
+function renderMath(container) {
+  if (typeof renderMathInElement === 'undefined' || window._katexLoadFailed) return
+  try {
+    renderMathInElement(container, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$',  right: '$',  display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true },
+      ],
+      // Skip math inside code blocks and <pre>
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      // Only process text nodes, not already-rendered math
+      ignoredClasses: ['katex-display', 'katex'],
+      throwOnError: false,
+      // Strict false = allow \textbf etc. inside math
+      strict: false,
+    })
+  } catch (_) {
+    // Silently fail — raw math is still readable
   }
 }
 
@@ -528,6 +558,8 @@ function renderMessages() {
   scrollToBottom(true) // force scroll on chat switch
   // Highlight code blocks after rendering
   highlightCodeBlocks(msgContainer)
+  // Render math ($...$, $$...$$) in all loaded messages
+  renderMath(msgContainer)
 }
 
 function appendMessageBubble(role, content, streaming = false) {
@@ -757,6 +789,7 @@ function finishStream(bubble, accumulated, chat) {
   bubble.classList.remove('typing-cursor')
   bubble.innerHTML = renderMarkdown(accumulated)
   highlightCodeBlocks(bubble)
+  renderMath(bubble)
   chat.messages.push({ role: 'assistant', content: accumulated })
   saveState()
   isStreaming = false
