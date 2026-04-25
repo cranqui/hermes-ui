@@ -277,19 +277,80 @@ function renderMath(container) {
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
+// Per-chat localStorage: O(1) saves on the active chat instead of O(N) full blob.
+// Layout:
+//   hermes_settings     → global settings (unchanged)
+//   hermes_chats_index  → [{id, title, sessionId, createdAt}, ...] sidebar metadata
+//   hermes_chat:{id}    → {id, title, sessionId, createdAt, messages} per-chat data
+
+const CHATS_INDEX_KEY = 'hermes_chats_index'
+function chatKey(id) { return `hermes_chat:${id}` }
 
 function loadState() {
   try {
     const s = localStorage.getItem('hermes_settings')
     if (s) settings = { ...DEFAULT_SETTINGS, ...JSON.parse(s) }
-    const c = localStorage.getItem('hermes_chats')
-    if (c) chats = JSON.parse(c)
+
+    // Try per-chat layout first; fall back to legacy single-blob
+    const idx = localStorage.getItem(CHATS_INDEX_KEY)
+    if (idx) {
+      const index = JSON.parse(idx)
+      chats = index.map(meta => {
+        const raw = localStorage.getItem(chatKey(meta.id))
+        if (raw) return JSON.parse(raw)
+        // Orphan index entry — fall back to metadata-only stub
+        return { ...meta, messages: [] }
+      })
+    } else {
+      // Legacy: single hermes_chats blob — migrate
+      const c = localStorage.getItem('hermes_chats')
+      if (c) {
+        chats = JSON.parse(c)
+        // Write into per-chat layout
+        _writeAllChats()
+        localStorage.removeItem('hermes_chats')
+      }
+    }
   } catch (_) {}
 }
 
 function saveState() {
   localStorage.setItem('hermes_settings', JSON.stringify(settings))
-  localStorage.setItem('hermes_chats', JSON.stringify(chats))
+  _writeAllChats()
+}
+
+// Internal: write index + only dirty per-chat keys (or all if needed)
+function _writeAllChats() {
+  const index = chats.map(c => ({ id: c.id, title: c.title, sessionId: c.sessionId, createdAt: c.createdAt }))
+  localStorage.setItem(CHATS_INDEX_KEY, JSON.stringify(index))
+  for (const c of chats) {
+    localStorage.setItem(chatKey(c.id), JSON.stringify(c))
+  }
+}
+
+// O(1) save: only the active chat (most common case during streaming / edits)
+function saveActiveChat() {
+  const chat = getActiveChat()
+  if (!chat) return
+  // Update index entry
+  const raw = localStorage.getItem(CHATS_INDEX_KEY)
+  const index = raw ? JSON.parse(raw) : []
+  const idx = index.findIndex(i => i.id === chat.id)
+  const meta = { id: chat.id, title: chat.title, sessionId: chat.sessionId, createdAt: chat.createdAt }
+  if (idx >= 0) index[idx] = meta; else index.unshift(meta)
+  localStorage.setItem(CHATS_INDEX_KEY, JSON.stringify(index))
+  // Write chat data
+  localStorage.setItem(chatKey(chat.id), JSON.stringify(chat))
+}
+
+// Remove a chat's per-key storage
+function removeChatStorage(chatId) {
+  localStorage.removeItem(chatKey(chatId))
+  const raw = localStorage.getItem(CHATS_INDEX_KEY)
+  if (raw) {
+    const index = JSON.parse(raw).filter(i => i.id !== chatId)
+    localStorage.setItem(CHATS_INDEX_KEY, JSON.stringify(index))
+  }
 }
 
 // ─── Chat management ─────────────────────────────────────────────────────────
@@ -325,6 +386,7 @@ function switchChat(id) {
 
 function deleteChat(id) {
   chats = chats.filter(c => c.id !== id)
+  removeChatStorage(id)
   if (activeChatId === id) activeChatId = chats[0]?.id || null
   saveState()
   renderSidebar()
@@ -671,7 +733,7 @@ function sendMessage() {
   attachedFiles = []
   renderAttachments()
   autoResize()
-  saveState()
+  saveActiveChat()
 
   welcome.style.display = 'none'
   msgContainer.style.display = 'flex'
@@ -752,7 +814,7 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
         if (model) { realModel = model; syncModelPill(); updateContextPill() }
       },
       onSession: (sid) => {
-        if (sid && chat) { chat.sessionId = sid; saveState() }
+        if (sid && chat) { chat.sessionId = sid; saveActiveChat() }
       },
       onUsage: (usage) => {
         if (usage && usage.prompt_tokens != null) {
@@ -801,7 +863,7 @@ function startIPCStream(chat, bubble) {
         if (payload.model) { realModel = payload.model; syncModelPill(); updateContextPill() }
         break
       case 'session':
-        if (payload.sessionId && chat) { chat.sessionId = payload.sessionId; saveState() }
+        if (payload.sessionId && chat) { chat.sessionId = payload.sessionId; saveActiveChat() }
         break
       case 'usage':
         if (payload && payload.prompt_tokens != null) {
@@ -846,7 +908,7 @@ function finishStream(bubble, accumulated, chat) {
     promptTokens: contextUsed || null,
     createdAt: Date.now(),
   })
-  saveState()
+  saveActiveChat()
   isStreaming = false
   userScrolledUp = false
   activeStreamCtrl = null
@@ -1098,7 +1160,7 @@ async function fetchModelInfo() {
         settings.model = info.model
       }
       syncModelPill()
-      saveState()
+      localStorage.setItem('hermes_settings', JSON.stringify(settings))
     }
     if (info && info.contextWindow) {
       contextWindow = info.contextWindow
