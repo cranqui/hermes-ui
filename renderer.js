@@ -301,6 +301,8 @@ function loadState() {
         // Orphan index entry — fall back to metadata-only stub
         return { ...meta, messages: [] }
       })
+      // Migration: ensure pinned field exists on all chats
+      for (const c of chats) { if (c.pinned === undefined) c.pinned = false }
     } else {
       // Legacy: single hermes_chats blob — migrate
       const c = localStorage.getItem('hermes_chats')
@@ -321,7 +323,7 @@ function saveState() {
 
 // Internal: write index + only dirty per-chat keys (or all if needed)
 function _writeAllChats() {
-  const index = chats.map(c => ({ id: c.id, title: c.title, sessionId: c.sessionId, createdAt: c.createdAt }))
+  const index = chats.map(c => ({ id: c.id, title: c.title, sessionId: c.sessionId, createdAt: c.createdAt, pinned: !!c.pinned }))
   localStorage.setItem(CHATS_INDEX_KEY, JSON.stringify(index))
   for (const c of chats) {
     localStorage.setItem(chatKey(c.id), JSON.stringify(c))
@@ -336,7 +338,7 @@ function saveActiveChat() {
   const raw = localStorage.getItem(CHATS_INDEX_KEY)
   const index = raw ? JSON.parse(raw) : []
   const idx = index.findIndex(i => i.id === chat.id)
-  const meta = { id: chat.id, title: chat.title, sessionId: chat.sessionId, createdAt: chat.createdAt }
+  const meta = { id: chat.id, title: chat.title, sessionId: chat.sessionId, createdAt: chat.createdAt, pinned: !!chat.pinned }
   if (idx >= 0) index[idx] = meta; else index.unshift(meta)
   localStorage.setItem(CHATS_INDEX_KEY, JSON.stringify(index))
   // Write chat data
@@ -360,7 +362,7 @@ function generateId() {
 }
 
 function newChat() {
-  const chat = { id: generateId(), title: 'New chat', messages: [], sessionId: null, createdAt: Date.now() }
+  const chat = { id: generateId(), title: 'New chat', messages: [], sessionId: null, createdAt: Date.now(), pinned: false }
   chats.unshift(chat)
   activeChatId = chat.id
   saveState()
@@ -382,6 +384,14 @@ function switchChat(id) {
   updateTopbar()
   renderSidebar()
   updateContextPill()
+}
+
+function togglePin(id) {
+  const chat = chats.find(c => c.id === id)
+  if (!chat) return
+  chat.pinned = !chat.pinned
+  saveActiveChat()
+  renderSidebar()
 }
 
 function deleteChat(id) {
@@ -558,6 +568,9 @@ function migrateTimestamps() {
 }
 
 function groupChatsByTime(chats) {
+  const pinned = chats.filter(c => c.pinned)
+  const unpinned = chats.filter(c => !c.pinned)
+
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const yesterday = new Date(today.getTime() - 86400000)
@@ -565,6 +578,7 @@ function groupChatsByTime(chats) {
   const month = new Date(today.getTime() - 30 * 86400000)
 
   const groups = [
+    { label: 'Pinned', chats: pinned },
     { label: 'Today', chats: [] },
     { label: 'Yesterday', chats: [] },
     { label: 'Previous 7 Days', chats: [] },
@@ -572,13 +586,13 @@ function groupChatsByTime(chats) {
     { label: 'Older', chats: [] },
   ]
 
-  for (const chat of chats) {
+  for (const chat of unpinned) {
     const ts = new Date(chat.createdAt)
-    if (ts >= today)       groups[0].chats.push(chat)
-    else if (ts >= yesterday) groups[1].chats.push(chat)
-    else if (ts >= week)   groups[2].chats.push(chat)
-    else if (ts >= month)  groups[3].chats.push(chat)
-    else                   groups[4].chats.push(chat)
+    if (ts >= today)       groups[1].chats.push(chat)
+    else if (ts >= yesterday) groups[2].chats.push(chat)
+    else if (ts >= week)   groups[3].chats.push(chat)
+    else if (ts >= month)  groups[4].chats.push(chat)
+    else                   groups[5].chats.push(chat)
   }
 
   return groups
@@ -609,8 +623,13 @@ function renderSidebar() {
 
     for (const chat of group.chats) {
       const item = document.createElement('div')
-      item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '')
+      item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '') + (chat.pinned ? ' pinned' : '')
       item.innerHTML = `
+        <button class="chat-item-pin" title="${chat.pinned ? 'Unpin' : 'Pin'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="${chat.pinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z"/>
+          </svg>
+        </button>
         <span class="chat-item-title">${escapeHtml(chat.title)}</span>
         <button class="chat-item-delete" title="Delete">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -618,6 +637,9 @@ function renderSidebar() {
             <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
           </svg>
         </button>`
+      item.querySelector('.chat-item-pin').addEventListener('click', (e) => {
+        e.stopPropagation(); togglePin(chat.id)
+      })
       item.querySelector('.chat-item-title').addEventListener('click', () => switchChat(chat.id))
       item.querySelector('.chat-item-delete').addEventListener('click', (e) => {
         e.stopPropagation(); deleteChat(chat.id)

@@ -140,6 +140,16 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       flex: 1;
     }
+    .chat-item-pin {
+      opacity: 0; flex-shrink: 0;
+      background: none; border: none; cursor: pointer;
+      color: var(--text-dim); padding: 2px;
+      border-radius: 4px; display: flex; align-items: center;
+      transition: opacity 0.12s, color 0.12s;
+    }
+    .chat-item:hover .chat-item-pin { opacity: 1; }
+    .chat-item.pinned .chat-item-pin { opacity: 1; color: var(--accent); }
+    .chat-item-pin:hover { color: var(--accent) !important; }
     .chat-item-delete {
       opacity: 0; flex-shrink: 0;
       background: none; border: none; cursor: pointer;
