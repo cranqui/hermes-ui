@@ -1,0 +1,59 @@
+<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#2f6de1"/>
+      <stop offset="100%" stop-color="#6a3de8"/>
+    </linearGradient>
+    <clipPath id="cc"><circle cx="250" cy="250" r="250"/></clipPath>
+  </defs>
+
+  <circle cx="250" cy="250" r="250" fill="url(#pg)"/>
+
+  <!-- Meerkat — scaled ~0.88x, head centered in circle -->
+  <g clip-path="url(#cc)">
+    <!-- tail (behind body) -->
+    <path d="M 326,483 Q 396,390 366,278"
+      fill="none" stroke="white" stroke-width="11" stroke-linecap="round"/>
+
+    <!-- ears -->
+    <ellipse cx="197" cy="104" rx="18" ry="24" fill="white"/>
+    <ellipse cx="197" cy="108" rx="8" ry="11" fill="rgba(0,0,0,0.07)"/>
+    <ellipse cx="313" cy="104" rx="18" ry="24" fill="white"/>
+    <ellipse cx="313" cy="108" rx="8" ry="11" fill="rgba(0,0,0,0.07)"/>
+
+    <!-- body (lower half mostly cropped by circle — natural bust look) -->
+    <ellipse cx="255" cy="428" rx="80" ry="130" fill="white"/>
+
+    <!-- arms -->
+    <path d="M 178,332 C 148,352 141,380 157,394"
+      fill="none" stroke="white" stroke-width="11" stroke-linecap="round"/>
+    <path d="M 332,332 C 362,352 369,380 353,394"
+      fill="none" stroke="white" stroke-width="11" stroke-linecap="round"/>
+
+    <!-- head -->
+    <ellipse cx="255" cy="214" rx="63" ry="76" fill="white"/>
+
+    <!-- muzzle -->
+    <ellipse cx="255" cy="261" rx="30" ry="23"
+      fill="rgba(0,0,0,0.05)" stroke="rgba(0,0,0,0.12)" stroke-width="4"/>
+
+    <!-- left eye patch -->
+    <ellipse cx="222" cy="204" rx="27" ry="22" fill="#1a1040"/>
+    <circle cx="222" cy="200" r="11" fill="white"/>
+    <circle cx="224" cy="202" r="5"  fill="#1a1040"/>
+    <circle cx="227" cy="198" r="3"  fill="white"/>
+
+    <!-- right eye patch -->
+    <ellipse cx="288" cy="204" rx="27" ry="22" fill="#1a1040"/>
+    <circle cx="288" cy="200" r="11" fill="white"/>
+    <circle cx="290" cy="202" r="5"  fill="#1a1040"/>
+    <circle cx="293" cy="198" r="3"  fill="white"/>
+
+    <!-- nose -->
+    <ellipse cx="255" cy="252" rx="7" ry="5" fill="#1a1040"/>
+
+    <!-- mouth -->
+    <path d="M 246,264 Q 255,273 264,264"
+      fill="none" stroke="#1a1040" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>

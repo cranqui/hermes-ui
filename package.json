@@ -1,0 +1,19 @@
+{
+  "name": "hermes-chat",
+  "version": "1.0.0",
+  "description": "A desktop chat interface for your Hermes Agent",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.0",
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "electron": "^41.0.0"
+  },
+  "author": "deibis",
+  "license": "MIT"
+}

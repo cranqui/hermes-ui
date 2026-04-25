@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src http://localhost:8642 http://127.0.0.1:8642; font-src 'self';" />
+  <title>Hermes Chat</title>
+  <!-- All scripts are external to satisfy script-src 'self' CSP -->
+  <script src="node_modules/marked/marked.min.js"></script>
+  <script src="node_modules/dompurify/dist/purify.min.js"></script>
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-main:        #ffffff;
+      --bg-sidebar:     #f5f5f5;
+      --bg-input:       #f0f0f0;
+      --bg-msg-user:    #1a1a1a;   /* dark bubble — Ollama style */
+      --bg-hover:       #ebebeb;
+      --bg-active:      #e4e4e4;
+      --border:         #e5e5e5;
+      --text-primary:   #111111;
+      --text-secondary: #6b6b6b;
+      --text-dim:       #b0b0b0;
+      --accent:         #1a1a1a;   /* dark send button when active */
+      --danger:         #dc2626;
+      --radius:         12px;
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    html, body {
+      height: 100%; overflow: hidden;
+      background: var(--bg-main);
+      color: var(--text-primary);
+      font-family: var(--font);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout ── */
+    #app { display: flex; height: 100vh; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 220px; min-width: 180px; max-width: 260px;
+      background: var(--bg-sidebar);
+      display: flex; flex-direction: column;
+      border-right: 1px solid var(--border);
+      user-select: none;
+    }
+
+    #sidebar-header {
+      padding: 40px 14px 8px; /* top padding for traffic lights */
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .hermes-logo {
+      width: 26px; height: 26px;
+      background: linear-gradient(135deg, #2f6de1, #6a3de8);
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0;
+    }
+
+    #sidebar-header h1 {
+      font-size: 14px; font-weight: 600;
+      color: var(--text-primary); letter-spacing: 0.01em;
+    }
+
+    #new-chat-btn {
+      margin: 6px 10px 4px;
+      background: none;
+      color: var(--text-secondary);
+      border: none;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 13px; font-family: var(--font);
+      cursor: pointer;
+      display: flex; align-items: center; gap: 7px;
+      transition: background 0.12s, color 0.12s;
+      width: calc(100% - 20px);
+    }
+    #new-chat-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    #new-chat-btn svg { flex-shrink: 0; }
+
+    /* Section label (e.g. "This week") */
+    .chat-section-label {
+      font-size: 11px; font-weight: 500;
+      color: var(--text-dim);
+      padding: 10px 14px 4px;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    #chat-list {
+      flex: 1; overflow-y: auto;
+      padding: 2px 6px;
+    }
+    #chat-list::-webkit-scrollbar { width: 4px; }
+    #chat-list::-webkit-scrollbar-track { background: transparent; }
+    #chat-list::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 4px; }
+
+    .chat-item {
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px;
+      transition: background 0.1s;
+    }
+    .chat-item:hover { background: var(--bg-hover); }
+    .chat-item.active { background: var(--bg-active); }
+
+    .chat-item-title {
+      font-size: 13px;
+      color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      flex: 1;
+    }
+    .chat-item-delete {
+      opacity: 0; flex-shrink: 0;
+      background: none; border: none; cursor: pointer;
+      color: var(--text-dim); padding: 2px;
+      border-radius: 4px; display: flex; align-items: center;
+      transition: opacity 0.12s, color 0.12s;
+    }
+    .chat-item:hover .chat-item-delete { opacity: 1; }
+    .chat-item-delete:hover { color: var(--danger); }
+
+    #sidebar-footer {
+      padding: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    #settings-btn {
+      width: 100%; background: none; border: none;
+      color: var(--text-secondary);
+      padding: 7px 10px; border-radius: 8px;
+      font-size: 13px; font-family: var(--font);
+      cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      transition: background 0.12s, color 0.12s;
+    }
+    #settings-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+    /* ── Main area ── */
+    #main {
+      flex: 1; display: flex; flex-direction: column;
+      min-width: 0; background: var(--bg-main);
+    }
+
+    /* ── Topbar ── */
+    #topbar {
+      height: 50px; min-height: 50px;
+      display: flex; align-items: center; justify-content: center;
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+      -webkit-app-region: drag;
+    }
+    #topbar-title {
+      font-size: 13px; font-weight: 500;
+      color: var(--text-secondary);
+      pointer-events: none;
+    }
+
+    /* ── Messages ── */
+    #messages {
+      flex: 1; overflow-y: auto;
+      padding: 28px 0 16px;
+      display: flex; flex-direction: column; gap: 0;
+    }
+    #messages::-webkit-scrollbar { width: 5px; }
+    #messages::-webkit-scrollbar-track { background: transparent; }
+    #messages::-webkit-scrollbar-thumb { background: #d8d8d8; border-radius: 4px; }
+
+    .msg-row {
+      display: flex;
+      padding: 3px 32px;
+      animation: fadeUp 0.16s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-row.user   { justify-content: flex-end;  margin-bottom: 6px; }
+    .msg-row.assistant { justify-content: flex-start; margin-bottom: 16px; }
+
+    .msg-bubble {
+      max-width: 70%;
+      line-height: 1.65;
+      font-size: 14px;
+      word-break: break-word;
+    }
+
+    /* User: dark rounded pill */
+    .msg-row.user .msg-bubble {
+      background: var(--bg-msg-user);
+      color: #ffffff;
+      padding: 10px 15px;
+      border-radius: 20px;
+      border-bottom-right-radius: 5px;
+    }
+
+    /* Assistant: no bubble — text sits directly on white */
+    .msg-row.assistant .msg-bubble {
+      background: transparent;
+      color: var(--text-primary);
+      padding: 2px 0;
+      max-width: 80%;
+    }
+
+    /* Markdown inside assistant text */
+    .msg-bubble p { margin: 0 0 10px; }
+    .msg-bubble p:last-child { margin-bottom: 0; }
+
+    .msg-bubble pre {
+      background: #f4f4f5;
+      border: 1px solid #e4e4e7;
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      margin: 10px 0;
+      font-size: 12.5px; line-height: 1.55;
+    }
+    .msg-bubble code {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+    }
+    .msg-bubble p code {
+      background: #f0f0f1;
+      border: 1px solid #e4e4e7;
+      padding: 1px 5px; border-radius: 4px;
+      color: #c11;
+    }
+    .msg-bubble ul, .msg-bubble ol {
+      padding-left: 22px; margin: 8px 0;
+    }
+    .msg-bubble li { margin: 4px 0; }
+    .msg-bubble h1, .msg-bubble h2, .msg-bubble h3 {
+      margin: 14px 0 5px; font-weight: 600; color: var(--text-primary);
+    }
+    .msg-bubble h1 { font-size: 18px; }
+    .msg-bubble h2 { font-size: 15px; }
+    .msg-bubble h3 { font-size: 14px; }
+    .msg-bubble blockquote {
+      border-left: 3px solid #d0d0d0;
+      padding-left: 12px; margin: 8px 0;
+      color: var(--text-secondary);
+    }
+    .msg-bubble table { border-collapse: collapse; margin: 10px 0; width: 100%; }
+    .msg-bubble th, .msg-bubble td {
+      border: 1px solid var(--border); padding: 7px 11px; font-size: 13px;
+    }
+    .msg-bubble th { background: #f4f4f5; font-weight: 600; }
+    .msg-bubble a { color: #2563eb; text-decoration: underline; }
+
+    /* Thinking indicator — shown while bubble is empty (no chunks yet) */
+    .typing-cursor:empty::before {
+      content: 'Thinking\2026'; /* "Thinking…" */
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    /* Static cursor once text starts streaming in */
+    .typing-cursor:not(:empty)::after {
+      content: '\2588'; /* solid block ▌ */
+      display: inline-block;
+      color: var(--text-dim);
+      margin-left: 1px;
+      opacity: 0.5;
+    }
+
+    /* ── Welcome screen ── */
+    #welcome {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 10px;
+      padding: 40px;
+    }
+    #welcome .big-logo {
+      width: 60px; height: 60px;
+      background: linear-gradient(135deg, #2f6de1, #6a3de8);
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px; margin-bottom: 6px;
+    }
+    #welcome h2 {
+      font-size: 20px; font-weight: 600;
+      color: var(--text-primary);
+    }
+    #welcome p {
+      font-size: 14px; color: var(--text-secondary);
+      text-align: center; max-width: 320px; line-height: 1.6;
+    }
+
+    /* ── Input area ── */
+    #input-area {
+      padding: 10px 20px 18px;
+      background: var(--bg-main);
+    }
+
+    /* Attached files row */
+    #attachments-row {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 0 2px 8px;
+    }
+    #attachments-row:empty { display: none; }
+
+    .attach-chip {
+      display: flex; align-items: center; gap: 5px;
+      background: var(--bg-active); border: 1px solid var(--border);
+      border-radius: 20px; padding: 3px 10px 3px 8px;
+      font-size: 12px; color: var(--text-secondary);
+      max-width: 200px;
+    }
+    .attach-chip span {
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .attach-chip-remove {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-dim); padding: 0; line-height: 1;
+      display: flex; align-items: center;
+      transition: color 0.12s;
+    }
+    .attach-chip-remove:hover { color: var(--danger); }
+
+    /* Main input box */
+    #input-wrapper {
+      display: flex; flex-direction: column;
+      background: var(--bg-input);
+      border: 1px solid transparent;
+      border-radius: 20px;
+      padding: 12px 12px 10px 16px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    #input-wrapper:focus-within {
+      border-color: #d0d0d0;
+      box-shadow: 0 0 0 3px rgba(0,0,0,0.04);
+    }
+
+    #message-input {
+      width: 100%; background: none; border: none; outline: none;
+      color: var(--text-primary);
+      font-size: 14px; font-family: var(--font);
+      resize: none; max-height: 180px; min-height: 24px;
+      line-height: 1.6; overflow-y: auto;
+      margin-bottom: 10px;
+    }
+    #message-input::placeholder { color: var(--text-dim); }
+    #message-input::-webkit-scrollbar { width: 4px; }
+    #message-input::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 4px; }
+
+    /* Toolbar inside input box */
+    #input-toolbar {
+      display: flex; align-items: center; gap: 6px;
+      justify-content: flex-end;
+    }
+
+    /* Shared round button style */
+    .round-btn {
+      width: 34px; height: 34px; flex-shrink: 0;
+      background: #e2e2e2;
+      border: none; border-radius: 50%;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-secondary);
+      transition: background 0.12s, color 0.12s;
+    }
+    .round-btn:hover { background: #d4d4d4; color: var(--text-primary); }
+
+    /* Model pill */
+    #model-pill {
+      display: flex; align-items: center; gap: 5px;
+      background: #e2e2e2;
+      border: none; border-radius: 20px;
+      padding: 0 12px; height: 34px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 13px; font-family: var(--font);
+      white-space: nowrap; max-width: 190px;
+      transition: background 0.12s, color 0.12s;
+    }
+    #model-pill:hover { background: #d4d4d4; color: var(--text-primary); }
+    #model-pill-name { overflow: hidden; text-overflow: ellipsis; }
+    #model-pill svg { flex-shrink: 0; opacity: 0.6; }
+
+    /* Send button — dark when enabled, muted when not */
+    #send-btn {
+      width: 34px; height: 34px; flex-shrink: 0;
+      background: var(--accent);
+      border: none; border-radius: 50%;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.12s, opacity 0.12s;
+    }
+    #send-btn:hover:not(:disabled) { background: #333; }
+    #send-btn:disabled { opacity: 1; cursor: default; background: #e2e2e2; }
+    #send-btn:disabled svg { color: #b0b0b0; }
+    #send-btn:not(:disabled) svg { color: #ffffff; }
+
+    /* ── Error toast ── */
+    #error-toast {
+      position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+      background: #fff0f0; border: 1px solid #fca5a5;
+      color: #991b1b; padding: 10px 18px; border-radius: 10px;
+      font-size: 13px; max-width: 420px; text-align: center;
+      display: none; z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      animation: fadeUp 0.2s ease;
+    }
+    #error-toast.show { display: block; }
+
+    /* ── Settings Panel (slide-over) ── */
+    #settings-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.25);
+      z-index: 200; align-items: flex-end; justify-content: center;
+    }
+    #settings-overlay.open { display: flex; }
+
+    #settings-panel {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 16px 16px 0 0;
+      width: 100%; max-width: 560px;
+      padding: 28px 28px 32px;
+      animation: slideUp 0.22s ease;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.08);
+    }
+    @keyframes slideUp {
+      from { transform: translateY(100%); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    #settings-panel h2 {
+      font-size: 16px; font-weight: 600;
+      margin-bottom: 20px; color: var(--text-primary);
+    }
+
+    .setting-group {
+      display: flex; flex-direction: column; gap: 6px;
+      margin-bottom: 16px;
+    }
+    .setting-group label {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-secondary); text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .setting-group input {
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: 8px; padding: 9px 12px;
+      color: var(--text-primary); font-size: 14px;
+      font-family: var(--font); outline: none;
+      transition: border-color 0.15s;
+    }
+    .setting-group input:focus { border-color: #a0a0a0; }
+
+    #settings-actions {
+      display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;
+    }
+    .btn {
+      padding: 8px 16px; border-radius: 8px; font-size: 13px;
+      font-family: var(--font); cursor: pointer;
+      border: none; transition: background 0.12s;
+    }
+    .btn-secondary {
+      background: var(--bg-active); color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .btn-primary {
+      background: var(--accent); color: #fff;
+    }
+    .btn-primary:hover { background: #333; }
+
+    .status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; margin-right: 6px;
+    }
+    .status-dot.green { background: #16a34a; }
+    .status-dot.red   { background: var(--danger); }
+    .status-dot.grey  { background: var(--text-dim); }
+
+    #connection-status {
+      font-size: 12px; color: var(--text-secondary);
+      display: flex; align-items: center; margin-top: 4px;
+    }
+
+    /* ── Context pill (in input toolbar) ── */
+    #ctx-pill {
+      display: none; /* shown once first response arrives */
+      flex-direction: column; align-items: center; justify-content: center;
+      background: #e8e8e8;
+      border-radius: 20px;
+      padding: 4px 11px 5px;
+      height: 34px; min-width: 72px;
+      gap: 3px;
+      cursor: default;
+    }
+    #ctx-pill.visible { display: flex; }
+
+    #ctx-text {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    #ctx-track {
+      width: 100%; height: 2.5px;
+      background: rgba(0,0,0,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #ctx-fill {
+      height: 100%; width: 0%;
+      background: #22c55e;
+      border-radius: 2px;
+      transition: width 0.5s ease, background-color 0.4s ease;
+    }
+    #ctx-fill.warm { background: #f59e0b; }
+    #ctx-fill.hot  { background: #ef4444; }
+
+    /* scrollbars */
+    * { scrollbar-width: thin; scrollbar-color: #d0d0d0 transparent; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <div class="hermes-logo">&#9889;</div>
+      <h1>Hermes</h1>
+    </div>
+
+    <button id="new-chat-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      New chat
+    </button>
+
+    <div id="chat-list"></div>
+
+    <div id="sidebar-footer">
+      <button id="settings-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        Settings
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main id="main">
+    <div id="topbar">
+      <span id="topbar-title">Hermes Chat</span>
+    </div>
+
+    <!-- Welcome screen (shown when no chat is active) -->
+    <div id="welcome">
+      <div class="big-logo">&#9889;</div>
+      <h2>Chat with Hermes</h2>
+      <p>Your self-improving AI agent, right on your desktop. Start a new conversation or pick one from the sidebar.</p>
+    </div>
+
+    <!-- Message list (hidden until a chat is active) -->
+    <div id="messages" style="display:none;"></div>
+
+    <div id="input-area">
+      <!-- Attached file chips appear here -->
+      <div id="attachments-row"></div>
+
+      <div id="input-wrapper">
+        <textarea id="message-input" rows="1" placeholder="Send a message"></textarea>
+
+        <!-- Bottom toolbar -->
+        <div id="input-toolbar">
+
+          <!-- + file attach -->
+          <button class="round-btn" id="attach-btn" title="Attach file">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+
+          <!-- Globe / web search hint -->
+          <button class="round-btn" id="globe-btn" title="Web context (coming soon)" style="opacity:0.5;cursor:default;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </button>
+
+          <!-- Context usage pill -->
+          <div id="ctx-pill" title="Context window used">
+            <span id="ctx-text">0 / —</span>
+            <div id="ctx-track"><div id="ctx-fill"></div></div>
+          </div>
+
+          <!-- Model pill -->
+          <button id="model-pill" title="Change model (opens Settings)">
+            <span id="model-pill-name">hermes-agent</span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+
+          <!-- Send -->
+          <button id="send-btn" disabled title="Send (Return)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5"/>
+              <polyline points="5 12 12 5 19 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Hidden file input -->
+      <input type="file" id="file-input" multiple style="display:none" />
+    </div>
+
+  </main>
+
+</div>
+
+<!-- Error toast -->
+<div id="error-toast"></div>
+
+<!-- Settings overlay -->
+<div id="settings-overlay">
+  <div id="settings-panel">
+    <h2>&#9881;&#65039; Settings</h2>
+
+    <div class="setting-group">
+      <label>Hermes API Endpoint</label>
+      <input id="s-endpoint" type="text" placeholder="http://localhost:8642/v1/chat/completions" />
+    </div>
+    <div class="setting-group">
+      <label>API Key</label>
+      <input id="s-apikey" type="password" placeholder="change-me-local-dev" />
+    </div>
+    <div class="setting-group">
+      <label>Model</label>
+      <input id="s-model" type="text" placeholder="hermes-agent" />
+    </div>
+
+    <div id="connection-status">
+      <span class="status-dot grey" id="conn-dot"></span>
+      <span id="conn-label">Not tested</span>
+    </div>
+
+    <div id="settings-actions">
+      <button class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
+      <button class="btn btn-secondary" id="cancel-settings-btn">Cancel</button>
+      <button class="btn btn-primary" id="save-settings-btn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="renderer.js"></script>
+</body>
+</html>

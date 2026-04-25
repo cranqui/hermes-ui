@@ -1,0 +1,63 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#2f6de1"/>
+      <stop offset="100%" stop-color="#6a3de8"/>
+    </linearGradient>
+    <clipPath id="sq"><rect width="1024" height="1024" rx="224" ry="224"/></clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Meerkat — scaled ~1.55x, centered, white on gradient -->
+  <g clip-path="url(#sq)">
+    <!-- tail -->
+    <path d="M 600,860 Q 740,648 659,438"
+      fill="none" stroke="white" stroke-width="20" stroke-linecap="round"/>
+
+    <!-- ears -->
+    <ellipse cx="387" cy="172" rx="33" ry="42" fill="white"/>
+    <ellipse cx="387" cy="178" rx="14" ry="20" fill="rgba(0,0,0,0.07)"/>
+    <ellipse cx="575" cy="172" rx="33" ry="42" fill="white"/>
+    <ellipse cx="575" cy="178" rx="14" ry="20" fill="rgba(0,0,0,0.07)"/>
+
+    <!-- body -->
+    <ellipse cx="481" cy="740" rx="140" ry="230" fill="white"/>
+
+    <!-- arms -->
+    <path d="M 344,548 C 279,595 265,651 296,676"
+      fill="none" stroke="white" stroke-width="20" stroke-linecap="round"/>
+    <path d="M 618,548 C 683,595 697,651 666,676"
+      fill="none" stroke="white" stroke-width="20" stroke-linecap="round"/>
+
+    <!-- head -->
+    <ellipse cx="481" cy="344" rx="112" ry="135" fill="white"/>
+
+    <!-- muzzle -->
+    <ellipse cx="481" cy="425" rx="53" ry="40"
+      fill="rgba(0,0,0,0.05)" stroke="rgba(0,0,0,0.12)" stroke-width="5"/>
+
+    <!-- left eye patch -->
+    <ellipse cx="431" cy="330" rx="48" ry="39" fill="#1a1040"/>
+    <circle cx="431" cy="324" r="19" fill="white"/>
+    <circle cx="434" cy="327" r="9"  fill="#1a1040"/>
+    <circle cx="439" cy="320" r="6"  fill="white"/>
+
+    <!-- right eye patch -->
+    <ellipse cx="531" cy="330" rx="48" ry="39" fill="#1a1040"/>
+    <circle cx="531" cy="324" r="19" fill="white"/>
+    <circle cx="534" cy="327" r="9"  fill="#1a1040"/>
+    <circle cx="539" cy="320" r="6"  fill="white"/>
+
+    <!-- nose -->
+    <ellipse cx="481" cy="410" rx="12" ry="8" fill="#1a1040"/>
+
+    <!-- mouth -->
+    <path d="M 467,430 Q 481,446 495,430"
+      fill="none" stroke="#1a1040" stroke-width="12" stroke-linecap="round"/>
+
+    <!-- feet -->
+    <ellipse cx="422" cy="968" rx="56" ry="25" fill="white"/>
+    <ellipse cx="540" cy="968" rx="56" ry="25" fill="white"/>
+  </g>
+</svg>

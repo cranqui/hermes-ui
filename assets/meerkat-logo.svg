@@ -1,0 +1,59 @@
+<svg viewBox="0 0 500 590" xmlns="http://www.w3.org/2000/svg">
+  <rect width="500" height="590" fill="white"/>
+
+  <!-- UPRIGHT TAIL — the #1 meerkat silhouette identifier -->
+  <path d="M 316,490 Q 395,385 355,268"
+    fill="none" stroke="#111" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- EARS — small, rounded, on the sides of the head -->
+  <ellipse cx="190" cy="100" rx="21" ry="27"
+    fill="white" stroke="#111" stroke-width="13"/>
+  <ellipse cx="190" cy="104" rx="9" ry="13" fill="#ede0cf"/>
+
+  <ellipse cx="310" cy="100" rx="21" ry="27"
+    fill="white" stroke="#111" stroke-width="13"/>
+  <ellipse cx="310" cy="104" rx="9" ry="13" fill="#ede0cf"/>
+
+  <!-- BODY — slender upright oval (meerkat stands tall) -->
+  <ellipse cx="250" cy="408" rx="90" ry="148"
+    fill="white" stroke="#111" stroke-width="13"/>
+
+  <!-- ARMS — small, at body sides -->
+  <path d="M 166,332 C 128,358 120,393 140,410"
+    fill="none" stroke="#111" stroke-width="13" stroke-linecap="round"/>
+  <path d="M 334,332 C 372,358 380,393 360,410"
+    fill="none" stroke="#111" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- HEAD — taller than wide, meerkat-proportioned -->
+  <ellipse cx="250" cy="190" rx="72" ry="87"
+    fill="white" stroke="#111" stroke-width="13"/>
+
+  <!-- MUZZLE — lighter oval gives the pointed-snout character -->
+  <ellipse cx="250" cy="245" rx="34" ry="26"
+    fill="#f0e8d8" stroke="#111" stroke-width="7"/>
+
+  <!-- LEFT EYE PATCH — the signature meerkat feature -->
+  <ellipse cx="215" cy="182" rx="31" ry="25" fill="#111"/>
+  <circle cx="215" cy="178" r="12" fill="white"/>
+  <circle cx="217" cy="180" r="6"  fill="#111"/>
+  <circle cx="220" cy="175" r="4"  fill="white"/>
+
+  <!-- RIGHT EYE PATCH -->
+  <ellipse cx="285" cy="182" rx="31" ry="25" fill="#111"/>
+  <circle cx="285" cy="178" r="12" fill="white"/>
+  <circle cx="287" cy="180" r="6"  fill="#111"/>
+  <circle cx="290" cy="175" r="4"  fill="white"/>
+
+  <!-- NOSE -->
+  <ellipse cx="250" cy="235" rx="8" ry="5" fill="#111"/>
+
+  <!-- MOUTH -->
+  <path d="M 241,249 Q 250,259 259,249"
+    fill="none" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- FEET -->
+  <ellipse cx="213" cy="553" rx="36" ry="16"
+    fill="white" stroke="#111" stroke-width="13"/>
+  <ellipse cx="287" cy="553" rx="36" ry="16"
+    fill="white" stroke="#111" stroke-width="13"/>
+</svg>
