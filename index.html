@@ -193,11 +193,12 @@
     /* ── Topbar ── */
     #topbar {
       height: 50px; min-height: 50px;
-      display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
       border-bottom: 1px solid var(--border);
       padding: 0 16px;
       -webkit-app-region: drag;
     }
+    #topbar-dot { flex-shrink: 0; }
     #topbar-title {
       font-size: 13px; font-weight: 500;
       color: var(--text-secondary);
@@ -507,7 +508,6 @@
     }
     #model-pill:hover { background: #d4d5de; color: var(--text-primary); }
     #model-pill-name { overflow: hidden; text-overflow: ellipsis; }
-    #model-pill svg { flex-shrink: 0; opacity: 0.6; }
 
     /* Send button — accent blue when enabled, muted when disabled */
     #send-btn {
@@ -706,6 +706,7 @@
   <!-- ── Main ── -->
   <main id="main">
     <div id="topbar">
+      <span class="status-dot grey" id="topbar-dot"></span>
       <span id="topbar-title">Hermes Chat</span>
     </div>
 
@@ -759,11 +760,8 @@
           </div>
 
           <!-- Model pill -->
-          <button id="model-pill" title="Change model (opens Settings)">
+          <button id="model-pill" title="Model info (opens Settings)">
             <span id="model-pill-name">hermes-agent</span>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
           </button>
 
           <!-- Send -->

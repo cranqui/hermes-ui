@@ -39,6 +39,7 @@ let isStreaming = false
 let realModel = null     // e.g. "glm-5.1:cloud"
 let contextWindow = null // e.g. 202752
 let contextUsed = null   // prompt_tokens from last response
+let isConnected = false  // topbar dot: green when Hermes API reachable
 
 // ─── Inflight state persistence ─────────────────────────────────────────────
 // If Electron crashes or the renderer dies mid-stream, we want to recover the
@@ -315,6 +316,7 @@ function switchChat(id) {
     setSendEnabled(true)
   }
   activeChatId = id
+  syncPerChatModel(getActiveChat())
   renderMessages()
   updateTopbar()
   renderSidebar()
@@ -1011,6 +1013,7 @@ const sModel    = document.getElementById('s-model')
 const sSendKey  = document.getElementById('s-sendkey')
 const connDot   = document.getElementById('conn-dot')
 const connLabel = document.getElementById('conn-label')
+const topbarDot = document.getElementById('topbar-dot')
 
 document.getElementById('settings-btn').addEventListener('click', openSettings)
 document.getElementById('cancel-settings-btn').addEventListener('click', closeSettings)
@@ -1037,8 +1040,9 @@ function saveSettings() {
   saveState()
   syncModelPill()
   closeSettings()
-  // Re-fetch model info when settings change
+  // Re-fetch model info + re-check connection when settings change
   fetchModelInfo()
+  checkTopbarConnection()
 }
 
 function setConnStatus(color, text) {
@@ -1105,6 +1109,52 @@ async function fetchModelInfo() {
   }
 }
 
+// ─── Topbar connection dot ──────────────────────────────────────────────────
+// Lightweight health check: pings the Hermes /health endpoint and updates the
+// small status dot in the topbar. Also sets isConnected for other code to query.
+
+function updateTopbarDot(color) {
+  if (topbarDot) topbarDot.className = `status-dot ${color}`
+}
+
+async function checkTopbarConnection() {
+  updateTopbarDot('grey')
+  const endpoint = settings.endpoint || DEFAULT_SETTINGS.endpoint
+  try {
+    const healthUrl = endpoint.replace(/\/v1\/chat\/completions$/, '/health')
+    const res = await fetch(healthUrl, { method: 'GET', signal: AbortSignal.timeout(5000) })
+    if (res.ok) {
+      updateTopbarDot('green')
+      isConnected = true
+    } else {
+      updateTopbarDot('red')
+      isConnected = false
+    }
+  } catch (_) {
+    updateTopbarDot('red')
+    isConnected = false
+  }
+}
+
+// ─── Per-chat model memory ───────────────────────────────────────────────────
+// When switching chats, look at the last assistant message's `model` field to
+// restore the model pill (each chat may have been answered by a different model).
+
+function syncPerChatModel(chat) {
+  if (!chat) { syncModelPill(); return }
+  // Walk backwards to find the last assistant message with a model field
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const m = chat.messages[i]
+    if (m.role === 'assistant' && m.model) {
+      realModel = m.model
+      syncModelPill()
+      return
+    }
+  }
+  // No per-chat model found — keep current realModel
+  syncModelPill()
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 loadState()
@@ -1116,6 +1166,7 @@ renderSidebar()
 renderMessages()
 updateTopbar()
 updateContextPill()
+checkTopbarConnection()
 setTimeout(() => msgInput.focus(), 100)
 
 // Flush inflight state before page unload (handles clean Electron close mid-stream)
