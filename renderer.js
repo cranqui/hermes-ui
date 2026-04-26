@@ -1461,7 +1461,7 @@ const sModel    = document.getElementById('s-model')
 const sSendKey  = document.getElementById('s-sendkey')
 const connDot   = document.getElementById('conn-dot')
 const connLabel = document.getElementById('conn-label')
-const topbarDot = document.getElementById('topbar-dot')
+const topbarDot = document.getElementById('topbar-dot') // removed from HTML — kept for safety
 
 document.getElementById('settings-btn').addEventListener('click', openSettings)
 document.getElementById('cancel-settings-btn').addEventListener('click', closeSettings)

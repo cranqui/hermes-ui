@@ -230,7 +230,6 @@
 
     #sidebar-footer {
       padding: 10px;
-      border-top: 1px solid var(--border);
       display: flex; flex-direction: column; gap: 2px;
     }
 
@@ -260,7 +259,7 @@
       padding: 0 16px;
       -webkit-app-region: drag;
     }
-    #topbar-dot { flex-shrink: 0; -webkit-app-region: no-drag; }
+
     #topbar-title {
       font-size: 13px; font-weight: 500;
       color: var(--text-secondary);
@@ -846,14 +845,6 @@
       font-size: 13px; padding: 20px 0;
     }
 
-    .status-dot {
-      display: inline-block; width: 7px; height: 7px;
-      border-radius: 50%; margin-right: 6px;
-    }
-    .status-dot.green { background: #16a34a; }
-    .status-dot.red   { background: var(--danger); }
-    .status-dot.grey  { background: var(--text-dim); }
-
     #connection-status {
       font-size: 12px; color: var(--text-secondary);
       display: flex; align-items: center; margin-top: 4px;
@@ -898,7 +889,7 @@
     /* ── Right sidebar (Progress / Tasks) ── */
     #right-sidebar {
       width: 0; min-width: 0;
-      background: #1c1c1e;
+      background: var(--bg-sidebar);
       display: flex; flex-direction: column;
       border-left: none;
       overflow: hidden;
@@ -908,7 +899,7 @@
     }
     #right-sidebar.open {
       width: 260px; min-width: 260px;
-      border-left: 1px solid rgba(255,255,255,0.08);
+      border-left: 1px solid var(--border);
     }
 
     #right-sidebar-header {
@@ -918,13 +909,13 @@
       flex-shrink: 0;
     }
     #right-sidebar-title {
-      font-size: 15px; font-weight: 700;
-      color: #ffffff;
+      font-size: 14px; font-weight: 600;
+      color: var(--text-primary);
       flex: 1;
     }
     #right-sidebar-collapse-btn {
       background: none; border: none; cursor: pointer;
-      color: rgba(255,255,255,0.45);
+      color: var(--text-secondary);
       width: 26px; height: 26px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 6px;
@@ -932,8 +923,8 @@
       flex-shrink: 0;
     }
     #right-sidebar-collapse-btn:hover {
-      background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.8);
+      background: var(--bg-hover);
+      color: var(--text-primary);
     }
     #right-sidebar-collapse-btn svg { transition: transform 0.2s ease; }
     #right-sidebar.collapsed-section #right-sidebar-collapse-btn svg {
@@ -941,7 +932,7 @@
     }
     #right-sidebar-close-btn {
       background: none; border: none; cursor: pointer;
-      color: rgba(255,255,255,0.35);
+      color: var(--text-dim);
       width: 26px; height: 26px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 6px;
@@ -949,8 +940,8 @@
       flex-shrink: 0;
     }
     #right-sidebar-close-btn:hover {
-      background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.7);
+      background: var(--bg-hover);
+      color: var(--text-secondary);
     }
 
     #task-list {
@@ -958,7 +949,7 @@
       padding: 4px 12px 20px;
     }
     #task-list::-webkit-scrollbar { width: 3px; }
-    #task-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+    #task-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
     .task-item {
       display: flex; align-items: flex-start; gap: 10px;
@@ -980,38 +971,38 @@
     }
     .task-icon.active {
       background: transparent;
-      border: 2px solid rgba(255,255,255,0.35);
-      color: rgba(255,255,255,0.7);
+      border: 2px solid var(--text-secondary);
+      color: var(--text-secondary);
       font-size: 10px;
     }
     .task-icon.pending {
       background: transparent;
-      border: 2px solid rgba(255,255,255,0.2);
+      border: 2px solid var(--border);
     }
     .task-icon.skipped {
       background: transparent;
-      border: 2px solid rgba(255,255,255,0.15);
-      color: rgba(255,255,255,0.3);
+      border: 2px solid var(--text-dim);
+      color: var(--text-dim);
     }
 
     .task-subject {
       font-size: 13px; line-height: 1.45;
-      color: rgba(255,255,255,0.5);
+      color: var(--text-dim);
       text-decoration: line-through;
       flex: 1;
     }
     .task-item.active .task-subject {
-      color: #ffffff;
+      color: var(--text-primary);
       text-decoration: none;
       font-weight: 500;
     }
     .task-item.pending .task-subject {
-      color: rgba(255,255,255,0.55);
+      color: var(--text-secondary);
       text-decoration: none;
       font-weight: 400;
     }
     .task-item.skipped .task-subject {
-      color: rgba(255,255,255,0.25);
+      color: var(--text-dim);
       text-decoration: line-through;
       font-weight: 400;
     }
@@ -1019,7 +1010,7 @@
     /* Divider between sections if needed */
     .task-section-label {
       font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
-      color: rgba(255,255,255,0.3);
+      color: var(--text-dim);
       text-transform: uppercase;
       padding: 12px 4px 6px;
     }
@@ -1072,7 +1063,6 @@
   <!-- ── Main ── -->
   <main id="main">
     <div id="topbar">
-      <span class="status-dot grey" id="topbar-dot"></span>
       <span id="topbar-title">Hermes Chat</span>
       <input id="topbar-title-input" type="text" maxlength="80" style="display:none;" />
     </div>
