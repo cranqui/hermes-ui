@@ -16,6 +16,17 @@
   "devDependencies": {
     "electron": "^41.0.0"
   },
+  "build": {
+    "mac": {
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "icon": "assets/icon.png"
+    },
+    "linux": {
+      "icon": "assets/icon.png"
+    }
+  },
   "author": "deibis",
   "license": "MIT"
 }
