@@ -58,13 +58,15 @@
 
     #sidebar.collapsed {
       width: 52px; min-width: 52px; max-width: 52px;
+      overflow: hidden;
     }
 
+    /* When collapsed: hide everything except collapse btn + settings */
+    #sidebar.collapsed .hermes-logo,
     #sidebar.collapsed #sidebar-header h1,
-    #sidebar.collapsed #new-chat-btn span,
+    #sidebar.collapsed #new-chat-btn,
     #sidebar.collapsed #chat-search-wrap,
-    #sidebar.collapsed .chat-title,
-    #sidebar.collapsed .chat-meta,
+    #sidebar.collapsed #chat-list,
     #sidebar.collapsed #sidebar-footer .btn-label {
       display: none;
     }
@@ -73,17 +75,8 @@
       justify-content: center;
       padding: 40px 0 8px;
     }
-
-    #sidebar.collapsed #new-chat-btn {
-      justify-content: center;
-      padding: 7px;
-      width: 36px;
-      margin: 6px auto 4px;
-    }
-
-    #sidebar.collapsed .chat-item {
-      justify-content: center;
-      padding: 8px;
+    #sidebar.collapsed #sidebar-collapse-btn {
+      margin-left: 0; /* cancel the auto-margin when only item visible */
     }
 
     #sidebar.collapsed #sidebar-footer {
@@ -106,7 +99,8 @@
       display: flex; align-items: center; justify-content: center;
       border-radius: 6px;
       flex-shrink: 0;
-      transition: background 0.12s, color 0.12s, transform 0.2s;
+      margin-left: auto; /* push to right side of header */
+      transition: background 0.12s, color 0.12s;
     }
     #sidebar-collapse-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
     #sidebar-collapse-btn svg { transition: transform 0.2s ease; }
@@ -907,13 +901,13 @@
   <!-- ── Sidebar ── -->
   <aside id="sidebar">
     <div id="sidebar-header">
+      <div class="hermes-logo">&#9889;</div>
+      <h1>Hermes</h1>
       <button id="sidebar-collapse-btn" title="Toggle sidebar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 18 9 12 15 6"/>
         </svg>
       </button>
-      <div class="hermes-logo">&#9889;</div>
-      <h1>Hermes</h1>
     </div>
 
     <button id="new-chat-btn">
