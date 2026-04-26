@@ -82,10 +82,10 @@ contextBridge.exposeInMainWorld('hermesAPI', {
       if (callbacks.onDone) callbacks.onDone()
     })
 
-    es.addEventListener('tasks', (e) => {
+    es.addEventListener('tool_progress', (e) => {
       try {
         const data = JSON.parse(e.data)
-        if (callbacks.onTasks) callbacks.onTasks(data.tasks)
+        if (callbacks.onToolProgress) callbacks.onToolProgress(data)
       } catch (_) {}
     })
 

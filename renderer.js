@@ -175,7 +175,6 @@ function resetStreamState() {
   _streamState.prevLen = 0
   _streamState.prevRendered = ''
   _streamState.inCodeFence = false
-  resetTaskParsing()
 }
 
 // Debounced DOM update for streaming: renders markdown at most every 150ms.
@@ -188,9 +187,8 @@ const STREAM_RENDER_INTERVAL = 150  // ms
 function debouncedStreamRender(bubble, accumulated) {
   _renderDebounceAccumulated = accumulated
   _renderDebounceBubble = bubble
-  // Parse tasks from streamed content in real-time
-  const parsedTasks = parseTasksFromContent(accumulated)
-  if (parsedTasks) updateTaskList(parsedTasks)
+  // Parse tool calls from streamed content in real-time
+  parseToolCallsFromContent(accumulated)
   if (_renderDebounceTimer) return  // already scheduled
   _renderDebounceTimer = setTimeout(() => {
     _renderDebounceTimer = null
@@ -406,7 +404,7 @@ function newChat() {
   renderMessages()
   updateTopbar()
   updateContextPill()
-  clearTaskList()
+  clearToolList()
 }
 
 function switchChat(id) {
@@ -421,7 +419,7 @@ function switchChat(id) {
   updateTopbar()
   renderSidebar()
   updateContextPill()
-  clearTaskList()
+  clearToolList()
 }
 
 function togglePin(id) {
@@ -932,15 +930,13 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
           updateContextPill()
         }
       },
-      onTasks: (tasks) => {
-        updateTaskList(tasks)
+      onToolProgress: (data) => {
+        addToolCall(data.name, data.preview, data.event_type)
       },
       onDone: () => {
         if (streamDone) return
         streamDone = true
         finishStream(bubble, accumulated, chat)
-        // Mark any still-active tasks as done when stream completes
-        finalizeTaskList()
       },
       onError: (err, payload) => {
         if (streamDone) return
@@ -1002,8 +998,8 @@ function startIPCStream(chat, bubble) {
         }
         errorStream(bubble, accumulated, payload.message || 'Unknown error')
         break
-      case 'tasks':
-        if (payload && payload.tasks) updateTaskList(payload.tasks)
+      case 'tool_progress':
+        if (payload && payload.name) addToolCall(payload.name, payload.preview, payload.event_type)
         break
     }
   })
@@ -1864,45 +1860,173 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // ─── Right sidebar: Progress / Task list ─────────────────────────────────────
 //
-// Tasks are driven by `tasks` SSE events emitted by Hermes.
-// Each task: { id, subject, status }  where status ∈ 'pending'|'in_progress'|'completed'
+// ─── Tool Progress Sidebar ──────────────────────────────────────────────────
+// Tracks every tool call that Hermes makes during a session.
+// Tool calls come from:
+//   1. SSE events: { name, preview, event_type } (forwarded from Hermes API)
+//   2. Parsed from streamed content (fallback when SSE events aren't available)
 //
-// The right sidebar opens automatically when the first tasks event arrives
-// and stays open. Users can collapse/expand the list section with the ∨ button.
+// The right sidebar opens automatically when the first tool call arrives
+// and shows each tool with emoji, name, and a preview of what it's doing.
 
 const rightSidebar       = document.getElementById('right-sidebar')
-const taskListEl         = document.getElementById('task-list')
-const rsCollapseBtn      = document.getElementById('right-sidebar-collapse-btn')
+const toolListEl         = document.getElementById('tool-list')
 const rsCloseBtn         = document.getElementById('right-sidebar-close-btn')
 
-let currentTasks = []
-let taskSectionCollapsed = false
+// Tool emoji mapping (matching Hermes gateway)
+const TOOL_EMOJIS = {
+  terminal: '💻', read_file: '📄', write_file: '✏️', patch: '🔧',
+  search_files: '🔍', browser_navigate: '🌐', browser_click: '👆',
+  browser_snapshot: '📸', browser_vision: '👁️', execute_code: '⚡',
+  web_search: '🔎', cronjob: '⏰', memory: '🧠', skill_manage: '📚',
+  delegate_task: '🤝', todo: '✅', vision_analyze: '👁️',
+  mcp_notion: '📝', process: '⚙️', himalaya: '📧',
+}
+
+function toolEmoji(name) {
+  return TOOL_EMOJIS[name] || '⚙️'
+}
+
+let toolCalls = []   // { id, name, preview, status: 'running'|'completed', count }
+let toolIdCounter = 0
+
+function addToolCall(name, preview, eventType) {
+  if (!name) return
+
+  // If same tool name is already running, update it (increment count)
+  const existing = toolCalls.find(t => t.name === name && t.status === 'running')
+  if (existing) {
+    if (preview) existing.preview = preview
+    existing.count = (existing.count || 1) + 1
+    renderToolList()
+    return
+  }
+
+  // If same tool was completed, start a new entry
+  const tool = {
+    id: ++toolIdCounter,
+    name: name,
+    preview: preview || '',
+    status: eventType === 'tool.completed' ? 'completed' : 'running',
+    count: 1,
+  }
+  toolCalls.push(tool)
+  openRightSidebar()
+  renderToolList()
+}
+
+function markToolCompleted(name) {
+  const running = toolCalls.find(t => t.name === name && t.status === 'running')
+  if (running) {
+    running.status = 'completed'
+    renderToolList()
+  }
+}
+
+function markAllToolsCompleted() {
+  toolCalls.forEach(t => { if (t.status === 'running') t.status = 'completed' })
+  renderToolList()
+}
+
+function renderToolList() {
+  const emptyEl = document.getElementById('tool-list-empty')
+
+  if (toolCalls.length === 0) {
+    if (emptyEl) emptyEl.style.display = ''
+    toolListEl.innerHTML = ''
+    toolListEl.appendChild(emptyEl || createEmptyEl())
+    updateToolTitle()
+    return
+  }
+
+  // Build tool list HTML (reverse chronological: newest first)
+  let html = ''
+  for (let i = toolCalls.length - 1; i >= 0; i--) {
+    const tool = toolCalls[i]
+    const emoji = toolEmoji(tool.name)
+    const isRunning = tool.status === 'running'
+    const countBadge = tool.count > 1 ? `<span class="tool-count">×${tool.count}</span>` : ''
+
+    html += `<div class="tool-item ${isRunning ? 'running' : 'completed'}">
+      <div class="tool-emoji">${emoji}</div>
+      <div class="tool-info">
+        <div class="tool-name">${escapeHtml(tool.name)}${countBadge}</div>
+        ${tool.preview ? `<div class="tool-preview">${escapeHtml(tool.preview)}</div>` : ''}
+      </div>
+    </div>`
+  }
+
+  toolListEl.innerHTML = html
+  updateToolTitle()
+}
+
+function updateToolTitle() {
+  const titleEl = document.getElementById('right-sidebar-title')
+  const total = toolCalls.length
+  if (total > 0) {
+    const running = toolCalls.filter(t => t.status === 'running').length
+    titleEl.textContent = running > 0 ? `Tools (${running} active)` : `Tools (${total})`
+  } else {
+    titleEl.textContent = 'Tools'
+  }
+}
+
+function parseToolCallsFromContent(text) {
+  // Parse tool calls from streamed markdown content.
+  // Hermes outputs tool mentions in patterns like:
+  //   ⚙️ terminal: "pwd"
+  //   📄 read_file: "config.yaml"
+  //   🔍 search_files: "*.py"
+  // These appear in the assistant's text output.
+  if (!text || text.length < 10) return
+
+  // Pattern: emoji tool_name: "preview" or emoji tool_name...
+  const toolRegex = /[⚙💻📄✏️🔧🔍🌐👆📸👁⚡🔎⏰🧠📚🤝✅📝📧]\s+(\w+)(?::\s*"([^"]{0,60})")?/g
+  let match
+  while ((match = toolRegex.exec(text)) !== null) {
+    const name = match[1]
+    const preview = match[2] || ''
+    // Only add if not already tracked (dedup by name)
+    if (!toolCalls.find(t => t.name === name)) {
+      addToolCall(name, preview, 'tool.started')
+    }
+  }
+}
+
+function clearToolList() {
+  toolCalls = []
+  toolIdCounter = 0
+  renderToolList()
+  closeRightSidebar()
+}
 
 function openRightSidebar() {
   if (!rightSidebar.classList.contains('open')) {
     rightSidebar.classList.add('open')
   }
-  tasksBtn?.classList.add('active')
+  toolsBtn?.classList.add('active')
 }
 
 function closeRightSidebar() {
   rightSidebar.classList.remove('open')
-  tasksBtn?.classList.remove('active')
+  toolsBtn?.classList.remove('active')
 }
 
 // Close button in right sidebar header
 rsCloseBtn?.addEventListener('click', closeRightSidebar)
 
-// Tasks button in input toolbar toggles right sidebar
-const tasksBtn = document.getElementById('tasks-btn')
+// Tools button in input toolbar toggles right sidebar
+const toolsBtn = document.getElementById('tools-btn')
 function toggleRightSidebar() {
   if (rightSidebar.classList.contains('open')) {
     closeRightSidebar()
   } else {
     openRightSidebar()
+    // If no tools yet, just show the empty sidebar
+    renderToolList()
   }
 }
-tasksBtn?.addEventListener('click', toggleRightSidebar)
+toolsBtn?.addEventListener('click', toggleRightSidebar)
 
 // Cmd+Shift+T (Mac) / Ctrl+Shift+T (Win/Linux) toggles right sidebar
 document.addEventListener('keydown', (e) => {
@@ -1911,195 +2035,6 @@ document.addEventListener('keydown', (e) => {
     toggleRightSidebar()
   }
 })
-
-// ─── Parse tasks from streamed content ────────────────────────────────────
-// Scans the accumulated markdown for Hermes todo tool output patterns:
-// 1. Markdown tables with a "Status" column (| ID | Content | Status |)
-// 2. Markdown checklists (- [x] or - [ ] items)
-// 3. Numbered/titled task sections with status labels
-
-let _lastParsedTaskSignature = ''
-
-function parseTasksFromContent(text) {
-  if (!text || text.length < 20) return null
-
-  const tasks = []
-
-  // Pattern 1: Markdown table with Status column
-  // | ID | Content | Status |
-  // |---|---|---|
-  // | 1 | Task description | completed |
-  // | 2 | Another task | in_progress |
-  const tableRowRegex = /\|\s*\d+\s*\|(.+?)\s*\|\s*(completed|in_progress|pending|skipped|done|todo|in progress|active)\s*\|/gi
-  let match
-  while ((match = tableRowRegex.exec(text)) !== null) {
-    const subject = match[1].trim()
-    let status = match[2].trim().toLowerCase()
-    // Normalize status
-    if (status === 'done') status = 'completed'
-    if (status === 'todo') status = 'pending'
-    if (status === 'active') status = 'in_progress'
-    if (status === 'in progress') status = 'in_progress'
-    tasks.push({ id: String(tasks.length + 1), subject, status })
-  }
-
-  // Pattern 2: Markdown checklist items
-  // - [x] Completed task
-  // - [ ] Pending task
-  // - [~] or - [>] In progress task
-  if (tasks.length === 0) {
-    const checkRegex = /^[-*]\s*\[([ x~>])\]\s*(.+)$/gm
-    while ((match = checkRegex.exec(text)) !== null) {
-      const check = match[1]
-      const subject = match[2].trim()
-      let status = 'pending'
-      if (check === 'x') status = 'completed'
-      else if (check === '~' || check === '>') status = 'in_progress'
-      tasks.push({ id: String(tasks.length + 1), subject, status })
-    }
-  }
-
-  // Pattern 3: Numbered items with explicit status labels
-  // 1. ✅ Task description  (completed)
-  // 2. 🔄 Task description  (in_progress)
-  // 3. ⏳ Task description  (pending)
-  if (tasks.length === 0) {
-    const emojiRegex = /^\s*\d+\.\s*(✅|🔄|⏳|✓|⟳)\s*(.+)$/gm
-    while ((match = emojiRegex.exec(text)) !== null) {
-      const emoji = match[1]
-      const subject = match[2].trim()
-      let status = 'pending'
-      if (emoji === '✅' || emoji === '✓') status = 'completed'
-      else if (emoji === '🔄' || emoji === '⟳') status = 'in_progress'
-      else if (emoji === '⏳') status = 'pending'
-      tasks.push({ id: String(tasks.length + 1), subject, status })
-    }
-  }
-
-  if (tasks.length === 0) return null
-
-  // Deduplicate: only update if the task signature changed
-  const sig = tasks.map(t => `${t.subject}:${t.status}`).join('|')
-  if (sig === _lastParsedTaskSignature) return null
-  _lastParsedTaskSignature = sig
-
-  return tasks
-}
-
-// Reset task parsing state on new stream
-function resetTaskParsing() {
-  _lastParsedTaskSignature = ''
-}
-
-function updateTaskList(tasks) {
-  if (!Array.isArray(tasks) || tasks.length === 0) return
-  currentTasks = tasks
-  openRightSidebar()
-  renderTaskList()
-}
-
-function finalizeTaskList() {
-  // Any task still marked in_progress gets completed when stream ends
-  // Any task still marked pending gets marked as skipped
-  currentTasks = currentTasks.map(t => {
-    if (t.status === 'in_progress') return { ...t, status: 'completed' }
-    if (t.status === 'pending') return { ...t, status: 'skipped' }
-    return t
-  })
-  renderTaskList()
-}
-
-function renderTaskList() {
-  if (taskSectionCollapsed) {
-    taskListEl.innerHTML = ''
-    updateProgressTitle()
-    return
-  }
-
-  // Group tasks: In Progress first, then Pending, then Completed
-  const inProgress = currentTasks.filter(t => t.status === 'in_progress')
-  const pending    = currentTasks.filter(t => t.status === 'pending')
-  const completed  = currentTasks.filter(t => t.status === 'completed')
-  const skipped    = currentTasks.filter(t => t.status === 'skipped')
-
-  let html = ''
-
-  if (inProgress.length) {
-    html += `<div class="task-section-label">In Progress</div>`
-    html += inProgress.map((task, idx) => renderTaskItem(task, currentTasks.indexOf(task))).join('')
-  }
-  if (pending.length) {
-    html += `<div class="task-section-label">Pending</div>`
-    html += pending.map(task => renderTaskItem(task, currentTasks.indexOf(task))).join('')
-  }
-  if (completed.length) {
-    html += `<div class="task-section-label">Completed</div>`
-    html += completed.map(task => renderTaskItem(task, currentTasks.indexOf(task))).join('')
-  }
-  if (skipped.length) {
-    html += `<div class="task-section-label">Skipped</div>`
-    html += skipped.map(task => renderTaskItem(task, currentTasks.indexOf(task))).join('')
-  }
-
-  taskListEl.innerHTML = html
-  updateProgressTitle()
-}
-
-function renderTaskItem(task, originalIdx) {
-  const isDone    = task.status === 'completed'
-  const isActive  = task.status === 'in_progress'
-  const isPending = task.status === 'pending'
-  const isSkipped = task.status === 'skipped'
-
-  let iconClass = 'pending'
-  let itemClass = 'pending'
-  let iconContent = ''
-
-  if (isDone) {
-    iconClass = 'done'
-    itemClass = ''
-    iconContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
-  } else if (isActive) {
-    iconClass = 'active'
-    itemClass = 'active'
-    iconContent = String(originalIdx + 1)
-  } else if (isSkipped) {
-    iconClass = 'skipped'
-    itemClass = 'skipped'
-    iconContent = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>`
-  }
-
-  return `<div class="task-item ${itemClass}">
-    <div class="task-icon ${iconClass}">${iconContent}</div>
-    <span class="task-subject">${escapeHtml(task.subject)}</span>
-  </div>`
-}
-
-function updateProgressTitle() {
-  const done = currentTasks.filter(t => t.status === 'completed' || t.status === 'skipped').length
-  const total = currentTasks.length
-  const titleEl = document.getElementById('right-sidebar-title')
-  if (total > 0) {
-    titleEl.textContent = `Progress (${done}/${total})`
-  } else {
-    titleEl.textContent = 'Progress'
-  }
-}
-
-// Collapse/expand the task list section (not the sidebar itself)
-rsCollapseBtn?.addEventListener('click', () => {
-  taskSectionCollapsed = !taskSectionCollapsed
-  rightSidebar.classList.toggle('collapsed-section', taskSectionCollapsed)
-  renderTaskList()
-})
-
-// Clear task list when a new chat starts
-function clearTaskList() {
-  currentTasks = []
-  taskListEl.innerHTML = ''
-  rightSidebar.classList.remove('open')
-  resetTaskParsing()
-}
 
 // ─── Settings tab lazy-loading ───────────────────────────────────────────────
 // Tab-click listener: load data when switching tabs while settings are open

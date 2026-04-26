@@ -434,9 +434,9 @@ function startHermesRequest(streamState, params) {
             streamState.sessionId = sid
             pushEvent(streamState, 'session', { sessionId: sid })
           }
-          // Task list updates: Hermes emits { tasks: [{id, subject, status}, …] }
-          if (parsed.tasks && Array.isArray(parsed.tasks)) {
-            pushEvent(streamState, 'tasks', { tasks: parsed.tasks })
+          // Tool progress updates: Hermes emits { name, preview, event_type }
+          if (parsed.tool_progress && typeof parsed.tool_progress === 'object') {
+            pushEvent(streamState, 'tool_progress', parsed.tool_progress)
           }
         } catch (_) {
           // ignore malformed lines
@@ -643,8 +643,9 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
           if (parsed.model) sendChatEvent(event, 'model', { model: parsed.model })
           const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
           if (sid) sendChatEvent(event, 'session', { sessionId: sid })
-          if (parsed.tasks && Array.isArray(parsed.tasks)) {
-            sendChatEvent(event, 'tasks', { tasks: parsed.tasks })
+          // Tool progress updates: Hermes emits { name, preview, event_type }
+          if (parsed.tool_progress && typeof parsed.tool_progress === 'object') {
+            sendChatEvent(event, 'tool_progress', parsed.tool_progress)
           }
         } catch (_) {}
       }
