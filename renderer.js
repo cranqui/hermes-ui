@@ -1499,36 +1499,45 @@ async function loadCronDashboard() {
     list.innerHTML = '<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">No scheduled jobs</div>'
     return
   }
-  list.innerHTML = jobs.map(renderCronCard).join('')
+  // Build cards with DOM nodes so event listeners work under CSP (no inline onclick)
+  list.innerHTML = ''
+  jobs.forEach(job => {
+    const card = renderCronCard(job)
+    list.appendChild(card)
+  })
 }
 
 function renderCronCard(job) {
   const statusClass = job.status === 'active' ? 'active' : 'paused'
   const lastRunHtml = job.lastRun
-    ? `<span class="${job.lastStatus === 'ok' ? 'cron-last-ok' : job.lastStatus === 'error' ? 'cron-last-error' : ''}">${job.lastRun} ${job.lastStatus || ''}</span>`
+    ? `<span class="${job.lastStatus === 'ok' ? 'cron-last-ok' : job.lastStatus === 'error' ? 'cron-last-error' : ''}">${escapeHtml(job.lastRun)} ${escapeHtml(job.lastStatus || '')}</span>`
     : '<span>Never</span>'
-  const toggleBtn = job.status === 'active'
-    ? `<button class="btn btn-secondary" onclick="toggleCron('${job.id}', false)">⏸ Pause</button>`
-    : `<button class="btn btn-secondary" onclick="toggleCron('${job.id}', true)">▶ Resume</button>`
-  return `
-    <div class="cron-card">
-      <div class="cron-card-header">
-        <span class="cron-card-name">${escapeHtml(job.name || job.id)}</span>
-        <span class="cron-card-status ${statusClass}">${job.status}</span>
-      </div>
-      <div class="cron-card-details">
-        <dt>Schedule</dt><dd><code>${escapeHtml(job.schedule || '—')}</code></dd>
-        <dt>Next run</dt><dd>${escapeHtml(job.nextRun || '—')}</dd>
-        <dt>Last run</dt><dd>${lastRunHtml}</dd>
-        ${job.skills ? `<dt>Skills</dt><dd>${escapeHtml(job.skills)}</dd>` : ''}
-        ${job.repeat ? `<dt>Repeat</dt><dd>${escapeHtml(job.repeat)}</dd>` : ''}
-        ${job.deliver ? `<dt>Deliver</dt><dd>${escapeHtml(job.deliver)}</dd>` : ''}
-      </div>
-      <div class="cron-card-actions">
-        ${toggleBtn}
-        <button class="btn btn-secondary" onclick="removeCron('${job.id}')" style="color:#c62828;">✕ Remove</button>
-      </div>
+
+  const card = document.createElement('div')
+  card.className = 'cron-card'
+  card.innerHTML = `
+    <div class="cron-card-header">
+      <span class="cron-card-name">${escapeHtml(job.name || job.id)}</span>
+      <span class="cron-card-status ${statusClass}">${escapeHtml(job.status)}</span>
+    </div>
+    <div class="cron-card-details">
+      <dt>Schedule</dt><dd><code>${escapeHtml(job.schedule || '—')}</code></dd>
+      <dt>Next run</dt><dd>${escapeHtml(job.nextRun || '—')}</dd>
+      <dt>Last run</dt><dd>${lastRunHtml}</dd>
+      ${job.skills ? `<dt>Skills</dt><dd>${escapeHtml(job.skills)}</dd>` : ''}
+      ${job.repeat ? `<dt>Repeat</dt><dd>${escapeHtml(job.repeat)}</dd>` : ''}
+      ${job.deliver ? `<dt>Deliver</dt><dd>${escapeHtml(job.deliver)}</dd>` : ''}
+    </div>
+    <div class="cron-card-actions">
+      <button class="btn btn-secondary js-cron-toggle">${job.status === 'active' ? '⏸ Pause' : '▶ Resume'}</button>
+      <button class="btn btn-secondary js-cron-remove" style="color:#c62828;">✕ Remove</button>
     </div>`
+
+  // Attach listeners after innerHTML (safe — no inline handlers)
+  card.querySelector('.js-cron-toggle').addEventListener('click', () => toggleCron(job.id, job.status !== 'active'))
+  card.querySelector('.js-cron-remove').addEventListener('click', () => removeCron(job.id))
+
+  return card
 }
 
 async function toggleCron(jobId, enable) {
@@ -1631,6 +1640,10 @@ function openSettings() {
   if (sSendKey) sSendKey.value = settings.sendKey || 'enter'
   setConnStatus('grey', 'Not tested')
   settingsOverlay.classList.add('open')
+  // Lazy-load data for whichever tab is currently active
+  const activeTab = document.querySelector('.settings-tab.active')?.getAttribute('data-tab')
+  if (activeTab === 'cron') loadCronDashboard()
+  if (activeTab === 'skills') loadSkillsList()
 }
 
 function closeSettings() { settingsOverlay.classList.remove('open') }
@@ -1809,15 +1822,7 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 // ─── Settings tab lazy-loading ───────────────────────────────────────────────
-// Override openSettings to also load data for the active tab
-const _origOpenSettings = openSettings
-openSettings = function() {
-  _origOpenSettings()
-  const activeTab = document.querySelector('.settings-tab.active')?.getAttribute('data-tab')
-  if (activeTab === 'cron') loadCronDashboard()
-  if (activeTab === 'skills') loadSkillsList()
-}
-
+// Tab-click listener: load data when switching tabs while settings are open
 document.querySelectorAll('.settings-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const target = tab.getAttribute('data-tab')
