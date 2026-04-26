@@ -458,6 +458,18 @@ if (searchInput) {
   })
 }
 
+// ─── DOM element references (must be declared before use) ──────────────────
+
+const chatList       = document.getElementById('chat-list')
+const msgContainer   = document.getElementById('messages')
+const welcome        = document.getElementById('welcome')
+const topbarTitle    = document.getElementById('topbar-title')
+const topbarTitleInput = document.getElementById('topbar-title-input')
+const sendBtn        = document.getElementById('send-btn')
+const msgInput       = document.getElementById('message-input')
+const attachmentsRow = document.getElementById('attachments-row')
+const modelPillName  = document.getElementById('model-pill-name')
+
 // ─── Smart auto-scroll ───────────────────────────────────────────────────────
 
 const isNearBottom = (tolerance = 80) => {
@@ -509,16 +521,6 @@ msgContainer.addEventListener('scroll', () => {
 })
 
 // ─── Render helpers ───────────────────────────────────────────────────────
-
-const chatList       = document.getElementById('chat-list')
-const msgContainer   = document.getElementById('messages')
-const welcome        = document.getElementById('welcome')
-const topbarTitle    = document.getElementById('topbar-title')
-const topbarTitleInput = document.getElementById('topbar-title-input')
-const sendBtn        = document.getElementById('send-btn')
-const msgInput       = document.getElementById('message-input')
-const attachmentsRow = document.getElementById('attachments-row')
-const modelPillName  = document.getElementById('model-pill-name')
 
 // ─── Model pill sync ──────────────────────────────────────────────────────────
 
