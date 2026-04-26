@@ -175,6 +175,7 @@ function resetStreamState() {
   _streamState.prevLen = 0
   _streamState.prevRendered = ''
   _streamState.inCodeFence = false
+  resetTaskParsing()
 }
 
 // Debounced DOM update for streaming: renders markdown at most every 150ms.
@@ -187,6 +188,9 @@ const STREAM_RENDER_INTERVAL = 150  // ms
 function debouncedStreamRender(bubble, accumulated) {
   _renderDebounceAccumulated = accumulated
   _renderDebounceBubble = bubble
+  // Parse tasks from streamed content in real-time
+  const parsedTasks = parseTasksFromContent(accumulated)
+  if (parsedTasks) updateTaskList(parsedTasks)
   if (_renderDebounceTimer) return  // already scheduled
   _renderDebounceTimer = setTimeout(() => {
     _renderDebounceTimer = null
@@ -1908,6 +1912,85 @@ document.addEventListener('keydown', (e) => {
   }
 })
 
+// ─── Parse tasks from streamed content ────────────────────────────────────
+// Scans the accumulated markdown for Hermes todo tool output patterns:
+// 1. Markdown tables with a "Status" column (| ID | Content | Status |)
+// 2. Markdown checklists (- [x] or - [ ] items)
+// 3. Numbered/titled task sections with status labels
+
+let _lastParsedTaskSignature = ''
+
+function parseTasksFromContent(text) {
+  if (!text || text.length < 20) return null
+
+  const tasks = []
+
+  // Pattern 1: Markdown table with Status column
+  // | ID | Content | Status |
+  // |---|---|---|
+  // | 1 | Task description | completed |
+  // | 2 | Another task | in_progress |
+  const tableRowRegex = /\|\s*\d+\s*\|(.+?)\s*\|\s*(completed|in_progress|pending|skipped|done|todo|in progress|active)\s*\|/gi
+  let match
+  while ((match = tableRowRegex.exec(text)) !== null) {
+    const subject = match[1].trim()
+    let status = match[2].trim().toLowerCase()
+    // Normalize status
+    if (status === 'done') status = 'completed'
+    if (status === 'todo') status = 'pending'
+    if (status === 'active') status = 'in_progress'
+    if (status === 'in progress') status = 'in_progress'
+    tasks.push({ id: String(tasks.length + 1), subject, status })
+  }
+
+  // Pattern 2: Markdown checklist items
+  // - [x] Completed task
+  // - [ ] Pending task
+  // - [~] or - [>] In progress task
+  if (tasks.length === 0) {
+    const checkRegex = /^[-*]\s*\[([ x~>])\]\s*(.+)$/gm
+    while ((match = checkRegex.exec(text)) !== null) {
+      const check = match[1]
+      const subject = match[2].trim()
+      let status = 'pending'
+      if (check === 'x') status = 'completed'
+      else if (check === '~' || check === '>') status = 'in_progress'
+      tasks.push({ id: String(tasks.length + 1), subject, status })
+    }
+  }
+
+  // Pattern 3: Numbered items with explicit status labels
+  // 1. ✅ Task description  (completed)
+  // 2. 🔄 Task description  (in_progress)
+  // 3. ⏳ Task description  (pending)
+  if (tasks.length === 0) {
+    const emojiRegex = /^\s*\d+\.\s*(✅|🔄|⏳|✓|⟳)\s*(.+)$/gm
+    while ((match = emojiRegex.exec(text)) !== null) {
+      const emoji = match[1]
+      const subject = match[2].trim()
+      let status = 'pending'
+      if (emoji === '✅' || emoji === '✓') status = 'completed'
+      else if (emoji === '🔄' || emoji === '⟳') status = 'in_progress'
+      else if (emoji === '⏳') status = 'pending'
+      tasks.push({ id: String(tasks.length + 1), subject, status })
+    }
+  }
+
+  if (tasks.length === 0) return null
+
+  // Deduplicate: only update if the task signature changed
+  const sig = tasks.map(t => `${t.subject}:${t.status}`).join('|')
+  if (sig === _lastParsedTaskSignature) return null
+  _lastParsedTaskSignature = sig
+
+  return tasks
+}
+
+// Reset task parsing state on new stream
+function resetTaskParsing() {
+  _lastParsedTaskSignature = ''
+}
+
 function updateTaskList(tasks) {
   if (!Array.isArray(tasks) || tasks.length === 0) return
   currentTasks = tasks
@@ -2015,6 +2098,7 @@ function clearTaskList() {
   currentTasks = []
   taskListEl.innerHTML = ''
   rightSidebar.classList.remove('open')
+  resetTaskParsing()
 }
 
 // ─── Settings tab lazy-loading ───────────────────────────────────────────────
