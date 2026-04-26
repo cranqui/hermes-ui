@@ -890,6 +890,112 @@
     #ctx-fill.warm { background: #f59e0b; }
     #ctx-fill.hot  { background: #ef4444; }
 
+    /* ── Right sidebar (Progress / Tasks) ── */
+    #right-sidebar {
+      width: 0; min-width: 0;
+      background: #1c1c1e;
+      display: flex; flex-direction: column;
+      border-left: none;
+      overflow: hidden;
+      transition: width 0.22s ease, min-width 0.22s ease;
+      flex-shrink: 0;
+      user-select: none;
+    }
+    #right-sidebar.open {
+      width: 260px; min-width: 260px;
+      border-left: 1px solid rgba(255,255,255,0.08);
+    }
+
+    #right-sidebar-header {
+      display: flex; align-items: center;
+      padding: 40px 16px 12px;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    #right-sidebar-title {
+      font-size: 15px; font-weight: 700;
+      color: #ffffff;
+      flex: 1;
+    }
+    #right-sidebar-collapse-btn {
+      background: none; border: none; cursor: pointer;
+      color: rgba(255,255,255,0.45);
+      width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      transition: background 0.12s, color 0.12s;
+      flex-shrink: 0;
+    }
+    #right-sidebar-collapse-btn:hover {
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.8);
+    }
+    #right-sidebar-collapse-btn svg { transition: transform 0.2s ease; }
+    #right-sidebar.collapsed-section #right-sidebar-collapse-btn svg {
+      transform: rotate(-90deg);
+    }
+
+    #task-list {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 4px 12px 20px;
+    }
+    #task-list::-webkit-scrollbar { width: 3px; }
+    #task-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+    .task-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 7px 4px;
+      border-radius: 8px;
+    }
+
+    /* Status icon */
+    .task-icon {
+      width: 22px; height: 22px; flex-shrink: 0;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700;
+      margin-top: 1px;
+    }
+    .task-icon.done {
+      background: #3b82f6;
+      color: #fff;
+    }
+    .task-icon.active {
+      background: transparent;
+      border: 2px solid rgba(255,255,255,0.35);
+      color: rgba(255,255,255,0.7);
+      font-size: 10px;
+    }
+    .task-icon.pending {
+      background: transparent;
+      border: 2px solid rgba(255,255,255,0.2);
+    }
+
+    .task-subject {
+      font-size: 13px; line-height: 1.45;
+      color: rgba(255,255,255,0.5);
+      text-decoration: line-through;
+      flex: 1;
+    }
+    .task-item.active .task-subject {
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .task-item.pending .task-subject {
+      color: rgba(255,255,255,0.55);
+      text-decoration: none;
+      font-weight: 400;
+    }
+
+    /* Divider between sections if needed */
+    .task-section-label {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+      color: rgba(255,255,255,0.3);
+      text-transform: uppercase;
+      padding: 12px 4px 6px;
+    }
+
     /* scrollbars */
     * { scrollbar-width: thin; scrollbar-color: #b8b8cc transparent; }
   </style>
@@ -1021,6 +1127,19 @@
     </div>
 
   </main>
+
+  <!-- ── Right sidebar: Progress / Tasks ── -->
+  <aside id="right-sidebar">
+    <div id="right-sidebar-header">
+      <span id="right-sidebar-title">Progress</span>
+      <button id="right-sidebar-collapse-btn" title="Collapse section">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"/>
+        </svg>
+      </button>
+    </div>
+    <div id="task-list"></div>
+  </aside>
 
 </div>
 

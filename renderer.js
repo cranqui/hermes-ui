@@ -402,6 +402,7 @@ function newChat() {
   renderMessages()
   updateTopbar()
   updateContextPill()
+  clearTaskList()
 }
 
 function switchChat(id) {
@@ -416,6 +417,7 @@ function switchChat(id) {
   updateTopbar()
   renderSidebar()
   updateContextPill()
+  clearTaskList()
 }
 
 function togglePin(id) {
@@ -926,15 +928,19 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
           updateContextPill()
         }
       },
+      onTasks: (tasks) => {
+        updateTaskList(tasks)
+      },
       onDone: () => {
         if (streamDone) return
         streamDone = true
         finishStream(bubble, accumulated, chat)
+        // Mark any still-active tasks as done when stream completes
+        finalizeTaskList()
       },
       onError: (err, payload) => {
         if (streamDone) return
         streamDone = true
-        // Session expired → clear sessionId so next request starts fresh
         if (payload && payload.sessionExpired && chat) {
           chat.sessionId = null
           saveActiveChat()
@@ -1848,6 +1854,85 @@ window.addEventListener('unhandledrejection', (event) => {
   const msg = event.reason instanceof Error ? event.reason.message : String(event.reason)
   showError(msg)
 })
+
+// ─── Right sidebar: Progress / Task list ─────────────────────────────────────
+//
+// Tasks are driven by `tasks` SSE events emitted by Hermes.
+// Each task: { id, subject, status }  where status ∈ 'pending'|'in_progress'|'completed'
+//
+// The right sidebar opens automatically when the first tasks event arrives
+// and stays open. Users can collapse/expand the list section with the ∨ button.
+
+const rightSidebar       = document.getElementById('right-sidebar')
+const taskListEl         = document.getElementById('task-list')
+const rsCollapseBtn      = document.getElementById('right-sidebar-collapse-btn')
+
+let currentTasks = []
+let taskSectionCollapsed = false
+
+function openRightSidebar() {
+  if (!rightSidebar.classList.contains('open')) {
+    rightSidebar.classList.add('open')
+  }
+}
+
+function updateTaskList(tasks) {
+  if (!Array.isArray(tasks) || tasks.length === 0) return
+  currentTasks = tasks
+  openRightSidebar()
+  renderTaskList()
+}
+
+function finalizeTaskList() {
+  // Any task still marked in_progress gets completed when stream ends
+  currentTasks = currentTasks.map(t =>
+    t.status === 'in_progress' ? { ...t, status: 'completed' } : t
+  )
+  renderTaskList()
+}
+
+function renderTaskList() {
+  if (taskSectionCollapsed) {
+    taskListEl.innerHTML = ''
+    return
+  }
+
+  taskListEl.innerHTML = currentTasks.map((task, idx) => {
+    const isDone    = task.status === 'completed'
+    const isActive  = task.status === 'in_progress'
+    const isPending = task.status === 'pending'
+
+    const iconClass  = isDone ? 'done' : isActive ? 'active' : 'pending'
+    const itemClass  = isDone ? '' : isActive ? 'active' : 'pending'
+
+    let iconContent = ''
+    if (isDone) {
+      // Checkmark SVG
+      iconContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+    } else if (isActive) {
+      iconContent = String(idx + 1)
+    }
+
+    return `<div class="task-item ${itemClass}">
+      <div class="task-icon ${iconClass}">${iconContent}</div>
+      <span class="task-subject">${escapeHtml(task.subject)}</span>
+    </div>`
+  }).join('')
+}
+
+// Collapse/expand the task list section (not the sidebar itself)
+rsCollapseBtn?.addEventListener('click', () => {
+  taskSectionCollapsed = !taskSectionCollapsed
+  rightSidebar.classList.toggle('collapsed-section', taskSectionCollapsed)
+  renderTaskList()
+})
+
+// Clear task list when a new chat starts
+function clearTaskList() {
+  currentTasks = []
+  taskListEl.innerHTML = ''
+  rightSidebar.classList.remove('open')
+}
 
 // ─── Settings tab lazy-loading ───────────────────────────────────────────────
 // Tab-click listener: load data when switching tabs while settings are open

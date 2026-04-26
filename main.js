@@ -434,6 +434,10 @@ function startHermesRequest(streamState, params) {
             streamState.sessionId = sid
             pushEvent(streamState, 'session', { sessionId: sid })
           }
+          // Task list updates: Hermes emits { tasks: [{id, subject, status}, …] }
+          if (parsed.tasks && Array.isArray(parsed.tasks)) {
+            pushEvent(streamState, 'tasks', { tasks: parsed.tasks })
+          }
         } catch (_) {
           // ignore malformed lines
         }

@@ -82,6 +82,13 @@ contextBridge.exposeInMainWorld('hermesAPI', {
       if (callbacks.onDone) callbacks.onDone()
     })
 
+    es.addEventListener('tasks', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (callbacks.onTasks) callbacks.onTasks(data.tasks)
+      } catch (_) {}
+    })
+
     es.addEventListener('done', () => {
       if (callbacks.onDone) callbacks.onDone()
       es.close()
