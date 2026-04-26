@@ -1322,11 +1322,11 @@ const attachBtn  = document.getElementById('attach-btn')
 
 attachBtn.addEventListener('click', () => fileInput.click())
 
-fileInput.addEventListener('change', () => {
-  const files = Array.from(fileInput.files || [])
+// Shared file processing (used by both file picker and drag-and-drop)
+function processFiles(files) {
   if (!files.length) return
 
-  files.forEach(file => {
+  Array.from(files).forEach(file => {
     // Skip duplicates
     if (attachedFiles.find(f => f.name === file.name)) return
 
@@ -1346,8 +1346,41 @@ fileInput.addEventListener('change', () => {
       setSendEnabled(true)
     }
   })
+}
+
+fileInput.addEventListener('change', () => {
+  processFiles(fileInput.files || [])
   // Reset so same file can be re-attached after removal
   fileInput.value = ''
+})
+
+// ─── Drag-and-drop ────────────────────────────────────────────────────────────
+
+const inputWrapper = document.getElementById('input-wrapper')
+
+inputWrapper.addEventListener('dragover', (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  inputWrapper.classList.add('drag-over')
+})
+
+inputWrapper.addEventListener('dragleave', (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  // Only remove class if leaving the wrapper entirely (not entering a child)
+  if (!inputWrapper.contains(e.relatedTarget)) {
+    inputWrapper.classList.remove('drag-over')
+  }
+})
+
+inputWrapper.addEventListener('drop', (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  inputWrapper.classList.remove('drag-over')
+  if (e.dataTransfer.files.length) {
+    processFiles(e.dataTransfer.files)
+    msgInput.focus()
+  }
 })
 
 function renderAttachments() {
