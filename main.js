@@ -394,6 +394,7 @@ function startHermesRequest(streamState, params) {
       }
     })
     let buffer = ''
+    let currentEventType = ''  // Track SSE event type from "event:" lines
 
     apiRes.on('data', (chunk) => {
       buffer += chunk.toString()
@@ -402,8 +403,33 @@ function startHermesRequest(streamState, params) {
 
       for (const line of lines) {
         const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith('data: ')) continue
+        if (!trimmed) {
+          // Empty line = end of SSE event, reset event type
+          currentEventType = ''
+          continue
+        }
+        // Track SSE event type
+        if (trimmed.startsWith('event: ')) {
+          currentEventType = trimmed.slice(7).trim()
+          continue
+        }
+        if (!trimmed.startsWith('data: ')) continue
         const data = trimmed.slice(6)
+
+        // Hermes tool progress events: "event: hermes.tool.progress"
+        // These carry {tool, emoji, label} — forward to client as tool_progress
+        if (currentEventType === 'hermes.tool.progress') {
+          try {
+            const payload = JSON.parse(data)
+            pushEvent(streamState, 'tool_progress', {
+              tool: payload.tool || payload.name || '',
+              emoji: payload.emoji || '',
+              label: payload.label || payload.preview || '',
+            })
+          } catch (_) {}
+          continue
+        }
+
         if (data === '[DONE]') {
           if (!doneSent) {
             doneSent = true
@@ -433,10 +459,6 @@ function startHermesRequest(streamState, params) {
           if (sid) {
             streamState.sessionId = sid
             pushEvent(streamState, 'session', { sessionId: sid })
-          }
-          // Tool progress updates: Hermes emits { name, preview, event_type }
-          if (parsed.tool_progress && typeof parsed.tool_progress === 'object') {
-            pushEvent(streamState, 'tool_progress', parsed.tool_progress)
           }
         } catch (_) {
           // ignore malformed lines
@@ -618,6 +640,7 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
 
     let buffer = ''
 
+    let currentEventType = ''  // Track SSE event type from "event:" lines
     apiRes.on('data', (chunk) => {
       buffer += chunk.toString()
       const lines = buffer.split('\n')
@@ -625,8 +648,30 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
 
       for (const line of lines) {
         const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith('data: ')) continue
+        if (!trimmed) {
+          currentEventType = ''
+          continue
+        }
+        if (trimmed.startsWith('event: ')) {
+          currentEventType = trimmed.slice(7).trim()
+          continue
+        }
+        if (!trimmed.startsWith('data: ')) continue
         const data = trimmed.slice(6)
+
+        // Hermes tool progress events
+        if (currentEventType === 'hermes.tool.progress') {
+          try {
+            const payload = JSON.parse(data)
+            sendChatEvent(event, 'tool_progress', {
+              tool: payload.tool || payload.name || '',
+              emoji: payload.emoji || '',
+              label: payload.label || payload.preview || '',
+            })
+          } catch (_) {}
+          continue
+        }
+
         if (data === '[DONE]') {
           if (!doneSent) {
             doneSent = true
@@ -643,10 +688,6 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
           if (parsed.model) sendChatEvent(event, 'model', { model: parsed.model })
           const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
           if (sid) sendChatEvent(event, 'session', { sessionId: sid })
-          // Tool progress updates: Hermes emits { name, preview, event_type }
-          if (parsed.tool_progress && typeof parsed.tool_progress === 'object') {
-            sendChatEvent(event, 'tool_progress', parsed.tool_progress)
-          }
         } catch (_) {}
       }
     })

@@ -187,8 +187,6 @@ const STREAM_RENDER_INTERVAL = 150  // ms
 function debouncedStreamRender(bubble, accumulated) {
   _renderDebounceAccumulated = accumulated
   _renderDebounceBubble = bubble
-  // Parse tool calls from streamed content in real-time
-  parseToolCallsFromContent(accumulated)
   if (_renderDebounceTimer) return  // already scheduled
   _renderDebounceTimer = setTimeout(() => {
     _renderDebounceTimer = null
@@ -931,7 +929,13 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
         }
       },
       onToolProgress: (data) => {
-        addToolCall(data.name, data.preview, data.event_type)
+        // data comes from Hermes API: { tool, emoji, label } for started
+        // Future: { tool, duration, error } for completed
+        if (data.event_type === 'tool.completed') {
+          markToolCompleted(data.tool || data.name)
+        } else {
+          addToolCall(data.tool || data.name, data.label || data.preview || '', data.emoji || '')
+        }
       },
       onDone: () => {
         if (streamDone) return
@@ -999,7 +1003,14 @@ function startIPCStream(chat, bubble) {
         errorStream(bubble, accumulated, payload.message || 'Unknown error')
         break
       case 'tool_progress':
-        if (payload && payload.name) addToolCall(payload.name, payload.preview, payload.event_type)
+        // data from Hermes API: { tool, emoji, label }
+        if (payload) {
+          if (payload.event_type === 'tool.completed') {
+            markToolCompleted(payload.tool || payload.name)
+          } else if (payload.tool || payload.name) {
+            addToolCall(payload.tool || payload.name, payload.label || payload.preview || '', payload.emoji || '')
+          }
+        }
         break
     }
   })
@@ -1037,6 +1048,8 @@ function finishStream(bubble, accumulated, chat) {
   setSendEnabled(true)
   updateContextPill()
   msgInput.focus()
+  // Mark all running tools as completed when stream finishes
+  markAllToolsCompleted()
   hideScrollButton()
 }
 
@@ -1890,7 +1903,7 @@ function toolEmoji(name) {
 let toolCalls = []   // { id, name, preview, status: 'running'|'completed', count }
 let toolIdCounter = 0
 
-function addToolCall(name, preview, eventType) {
+function addToolCall(name, preview, emoji) {
   if (!name) return
 
   // If same tool name is already running, update it (increment count)
@@ -1907,7 +1920,8 @@ function addToolCall(name, preview, eventType) {
     id: ++toolIdCounter,
     name: name,
     preview: preview || '',
-    status: eventType === 'tool.completed' ? 'completed' : 'running',
+    emoji: emoji || '',           // emoji from Hermes API (preferred)
+    status: 'running',
     count: 1,
   }
   toolCalls.push(tool)
@@ -1943,7 +1957,7 @@ function renderToolList() {
   let html = ''
   for (let i = toolCalls.length - 1; i >= 0; i--) {
     const tool = toolCalls[i]
-    const emoji = toolEmoji(tool.name)
+    const emoji = tool.emoji || toolEmoji(tool.name)
     const isRunning = tool.status === 'running'
     const countBadge = tool.count > 1 ? `<span class="tool-count">×${tool.count}</span>` : ''
 
@@ -1968,28 +1982,6 @@ function updateToolTitle() {
     titleEl.textContent = running > 0 ? `Tools (${running} active)` : `Tools (${total})`
   } else {
     titleEl.textContent = 'Tools'
-  }
-}
-
-function parseToolCallsFromContent(text) {
-  // Parse tool calls from streamed markdown content.
-  // Hermes outputs tool mentions in patterns like:
-  //   ⚙️ terminal: "pwd"
-  //   📄 read_file: "config.yaml"
-  //   🔍 search_files: "*.py"
-  // These appear in the assistant's text output.
-  if (!text || text.length < 10) return
-
-  // Pattern: emoji tool_name: "preview" or emoji tool_name...
-  const toolRegex = /[⚙💻📄✏️🔧🔍🌐👆📸👁⚡🔎⏰🧠📚🤝✅📝📧]\s+(\w+)(?::\s*"([^"]{0,60})")?/g
-  let match
-  while ((match = toolRegex.exec(text)) !== null) {
-    const name = match[1]
-    const preview = match[2] || ''
-    // Only add if not already tracked (dedup by name)
-    if (!toolCalls.find(t => t.name === name)) {
-      addToolCall(name, preview, 'tool.started')
-    }
   }
 }
 
