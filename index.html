@@ -59,33 +59,33 @@
     #sidebar.collapsed {
       width: 52px; min-width: 52px; max-width: 52px;
       overflow: hidden;
+      background: var(--bg-main); /* match main content colour */
+      border-right: none;        /* no dividing line when collapsed */
     }
 
-    /* When collapsed: hide everything except collapse btn + settings */
-    #sidebar.collapsed .hermes-logo,
-    #sidebar.collapsed #sidebar-header h1,
+    /* When collapsed: hide everything except footer buttons */
+    #sidebar.collapsed #sidebar-header,
     #sidebar.collapsed #new-chat-btn,
     #sidebar.collapsed #chat-search-wrap,
-    #sidebar.collapsed #chat-list,
-    #sidebar.collapsed #sidebar-footer .btn-label {
+    #sidebar.collapsed #chat-list {
       display: none;
     }
 
-    #sidebar.collapsed #sidebar-header {
-      justify-content: center;
-      padding: 40px 0 8px;
-    }
-    #sidebar.collapsed #sidebar-collapse-btn {
-      margin-left: 0; /* cancel the auto-margin when only item visible */
-    }
-
     #sidebar.collapsed #sidebar-footer {
-      justify-content: center;
+      border-top: none;
+      padding: 10px 8px;
+      align-items: center;
+      margin-top: auto; /* push to bottom since chat-list is hidden */
     }
 
     #sidebar.collapsed #sidebar-footer button {
       justify-content: center;
       padding: 8px;
+      width: 36px;
+    }
+
+    #sidebar.collapsed #sidebar-footer .btn-label {
+      display: none;
     }
 
     #sidebar.collapsed #sidebar-collapse-btn svg {
@@ -93,17 +93,16 @@
     }
 
     #sidebar-collapse-btn {
-      background: none; border: none; cursor: pointer;
-      color: var(--text-dim);
-      width: 24px; height: 24px;
-      display: flex; align-items: center; justify-content: center;
-      border-radius: 6px;
-      flex-shrink: 0;
-      margin-left: auto; /* push to right side of header */
+      width: 100%; background: none; border: none;
+      color: var(--text-secondary);
+      padding: 7px 10px; border-radius: 8px;
+      font-size: 13px; font-family: var(--font);
+      cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
       transition: background 0.12s, color 0.12s;
     }
     #sidebar-collapse-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-    #sidebar-collapse-btn svg { transition: transform 0.2s ease; }
+    #sidebar-collapse-btn svg { transition: transform 0.2s ease; flex-shrink: 0; }
 
     #sidebar-header {
       padding: 40px 14px 8px; /* top padding for traffic lights */
@@ -232,6 +231,7 @@
     #sidebar-footer {
       padding: 10px;
       border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 2px;
     }
 
     #settings-btn {
@@ -903,11 +903,6 @@
     <div id="sidebar-header">
       <div class="hermes-logo">&#9889;</div>
       <h1>Hermes</h1>
-      <button id="sidebar-collapse-btn" title="Toggle sidebar">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
-      </button>
     </div>
 
     <button id="new-chat-btn">
@@ -924,6 +919,12 @@
     <div id="chat-list"></div>
 
     <div id="sidebar-footer">
+      <button id="sidebar-collapse-btn" title="Toggle sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        <span class="btn-label">Collapse</span>
+      </button>
       <button id="settings-btn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <circle cx="12" cy="12" r="3"/>
