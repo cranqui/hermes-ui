@@ -1798,6 +1798,22 @@ function syncPerChatModel(chat) {
   syncModelPill()
 }
 
+// ─── Sidebar collapse ──────────────────────────────────────────────────────
+const sidebar = document.getElementById('sidebar')
+const collapseBtn = document.getElementById('sidebar-collapse-btn')
+
+// Restore persisted state
+if (localStorage.getItem('sidebar_collapsed') === 'true') {
+  sidebar.classList.add('collapsed')
+}
+
+function toggleSidebar() {
+  sidebar.classList.toggle('collapsed')
+  localStorage.setItem('sidebar_collapsed', sidebar.classList.contains('collapsed'))
+}
+
+collapseBtn.addEventListener('click', toggleSidebar)
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 loadState()
