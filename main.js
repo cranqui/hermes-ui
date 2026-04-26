@@ -756,3 +756,105 @@ ipcMain.handle('get-model-info', async () => {
 
   return { model: cfg.model, contextWindow }
 })
+
+// ─── IPC: Hermes CLI commands (cron, skills, plugins) ───────────────────────
+const { execSync } = require('child_process')
+
+function runHermes(args) {
+  try {
+    const out = execSync(`hermes ${args}`, { timeout: 15000, encoding: 'utf8' })
+    return { ok: true, data: out }
+  } catch (err) {
+    return { ok: false, error: err.stderr?.toString() || err.message }
+  }
+}
+
+ipcMain.handle('cron-list', async () => {
+  const r = runHermes('cron list')
+  if (!r.ok) return r
+  const jobs = []
+  const blocks = r.data.split(/\n\s*\n/).filter(b => b.includes('[active]') || b.includes('[paused]'))
+  for (const block of blocks) {
+    const id = (block.match(/^\s*([a-f0-9]+)\s*\[/m) || [])[1]
+    const status = (block.match(/\[(active|paused)\]/) || [])[1]
+    const name = (block.match(/Name:\s+(.+)/) || [])[1]?.trim()
+    const schedule = (block.match(/Schedule:\s+(.+)/) || [])[1]?.trim()
+    const repeat = (block.match(/Repeat:\s+(.+)/) || [])[1]?.trim()
+    const nextRun = (block.match(/Next run:\s+(.+)/) || [])[1]?.trim()
+    const deliver = (block.match(/Deliver:\s+(.+)/) || [])[1]?.trim()
+    const skills = (block.match(/Skills:\s+(.+)/) || [])[1]?.trim()
+    const lastRunLine = block.match(/Last run:\s+(.+)/)?.[1]?.trim()
+    let lastRun = null, lastStatus = null
+    if (lastRunLine) {
+      const parts = lastRunLine.match(/(.+?)\s+(ok|error|running)$/s)
+      if (parts) { lastRun = parts[1].trim(); lastStatus = parts[2] }
+      else { lastRun = lastRunLine }
+    }
+    if (id) jobs.push({ id, status, name, schedule, repeat, nextRun, deliver, skills, lastRun, lastStatus })
+  }
+  return { ok: true, data: jobs }
+})
+
+ipcMain.handle('cron-status', async () => {
+  return runHermes('cron status')
+})
+
+ipcMain.handle('cron-pause', async (_e, jobId) => {
+  return runHermes(`cron pause ${jobId}`)
+})
+
+ipcMain.handle('cron-resume', async (_e, jobId) => {
+  return runHermes(`cron resume ${jobId}`)
+})
+
+ipcMain.handle('cron-remove', async (_e, jobId) => {
+  return runHermes(`cron rm ${jobId}`)
+})
+
+ipcMain.handle('skills-list', async () => {
+  const r = runHermes('skills list')
+  if (!r.ok) return r
+  const skills = []
+  const lines = r.data.split('\n')
+  // Parse rows between the header separator and footer
+  let inTable = false
+  for (const line of lines) {
+    if (line.includes('━')) { inTable = !inTable; continue }
+    if (!inTable) continue
+    const m = line.match(/│\s*(.+?)\s*│\s*(.+?)\s*│\s*(.+?)\s*│\s*(.+?)\s*│/)
+    if (m) {
+      skills.push({ name: m[1].trim(), category: m[2].trim(), source: m[3].trim(), trust: m[4].trim() })
+    }
+  }
+  return { ok: true, data: skills }
+})
+
+ipcMain.handle('plugins-list', async () => {
+  const r = runHermes('plugins list')
+  if (!r.ok) return r
+  const plugins = []
+  const lines = r.data.split('\n')
+  let inTable = false, currentPlugin = null
+  for (const line of lines) {
+    if (line.includes('━')) { inTable = !inTable; continue }
+    if (!inTable) continue
+    const m = line.match(/│\s*(.+?)\s*│\s*(.+?)\s*│\s*(.+?)\s*│\s*(.+?)\s*│\s*(.+?)\s*│/)
+    if (m) {
+      const name = m[1].trim(), status = m[2].trim(), version = m[3].trim(), desc = m[4].trim(), source = m[5].trim()
+      if (name) {
+        if (currentPlugin) plugins.push(currentPlugin)
+        currentPlugin = { name, status, version, description: desc, source }
+      } else if (currentPlugin && desc) {
+        // Multi-line description
+        currentPlugin.description += ' ' + desc
+      }
+    }
+  }
+  if (currentPlugin) plugins.push(currentPlugin)
+  return { ok: true, data: plugins }
+})
+
+ipcMain.handle('plugins-toggle', async (_e, name, enable) => {
+  const action = enable ? 'enable' : 'disable'
+  return runHermes(`plugins ${action} ${name}`)
+})

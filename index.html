@@ -693,6 +693,105 @@
     }
     .btn-primary:hover { background: #1d5ccc; }
 
+    /* Settings tabs */
+    #settings-tabs {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      margin-bottom: 20px; margin-top: -4px;
+    }
+    .settings-tab {
+      padding: 8px 16px; font-size: 13px; font-weight: 500;
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--text-secondary); cursor: pointer; transition: all 0.15s;
+    }
+    .settings-tab:hover { color: var(--text-primary); }
+    .settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .settings-tab-content { display: none; }
+    .settings-tab-content.active { display: block; }
+
+    /* Cron job cards */
+    #cron-status-banner {
+      padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
+      font-size: 13px; line-height: 1.4;
+    }
+    #cron-status-banner.running { background: #e8f5e9; color: #2e7d32; }
+    #cron-status-banner.stopped { background: #fbe9e7; color: #c62828; }
+    #cron-status-banner.error   { background: #fbe9e7; color: #c62828; }
+
+    .cron-card {
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 10px;
+      transition: border-color 0.15s;
+    }
+    .cron-card:hover { border-color: #b8b8cc; }
+    .cron-card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .cron-card-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .cron-card-status {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 10px; letter-spacing: 0.05em;
+    }
+    .cron-card-status.active { background: #e8f5e9; color: #2e7d32; }
+    .cron-card-status.paused { background: #fff3e0; color: #e65100; }
+    .cron-card-details {
+      display: grid; grid-template-columns: auto 1fr; gap: 2px 12px;
+      font-size: 12px; color: var(--text-secondary);
+    }
+    .cron-card-details dt { font-weight: 500; color: var(--text-primary); }
+    .cron-card-actions {
+      display: flex; gap: 6px; margin-top: 10px;
+    }
+    .cron-card-actions .btn { font-size: 11px; padding: 4px 10px; }
+    .cron-last-ok { color: #2e7d32; }
+    .cron-last-error { color: #c62828; }
+
+    /* Skills list */
+    #skills-search {
+      width: 100%; background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 12px; font-size: 13px;
+      color: var(--text-primary); font-family: var(--font); outline: none;
+      margin-bottom: 10px;
+    }
+    #skills-search:focus { border-color: #b8b8cc; }
+    #skills-category-chips {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
+    }
+    .skill-chip {
+      font-size: 11px; padding: 3px 10px; border-radius: 12px;
+      background: var(--bg-active); color: var(--text-secondary);
+      border: 1px solid var(--border); cursor: pointer; transition: all 0.12s;
+    }
+    .skill-chip:hover { border-color: #b8b8cc; color: var(--text-primary); }
+    .skill-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .skill-category-header {
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 12px 0 6px; padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .skill-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 4px; border-radius: 6px; transition: background 0.1s;
+    }
+    .skill-row:hover { background: var(--bg-hover); }
+    .skill-name { font-size: 13px; color: var(--text-primary); font-weight: 500; }
+    .skill-source {
+      font-size: 10px; padding: 2px 7px; border-radius: 8px;
+      font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .skill-source.builtin { background: #e3f2fd; color: #1565c0; }
+    .skill-source.local    { background: #e8f5e9; color: #2e7d32; }
+    .skill-source.hub      { background: #f3e5f5; color: #7b1fa2; }
+    #cron-refresh-row, #skills-refresh-row {
+      margin-top: 14px; display: flex; justify-content: flex-end;
+    }
+    #cron-jobs-list:empty::after, #skills-list:empty::after {
+      content: 'No data — click Refresh to load';
+      display: block; text-align: center; color: var(--text-secondary);
+      font-size: 13px; padding: 20px 0;
+    }
+
     .status-dot {
       display: inline-block; width: 7px; height: 7px;
       border-radius: 50%; margin-right: 6px;
@@ -876,38 +975,64 @@
 <!-- Settings overlay -->
 <div id="settings-overlay">
   <div id="settings-panel">
-    <h2>&#9881;&#65039; Settings</h2>
-
-    <div class="setting-group">
-      <label>Hermes API Endpoint</label>
-      <input id="s-endpoint" type="text" placeholder="http://localhost:8642/v1/chat/completions" />
-    </div>
-    <div class="setting-group">
-      <label>API Key</label>
-      <input id="s-apikey" type="password" placeholder="change-me-local-dev" />
-    </div>
-    <div class="setting-group">
-      <label>Model</label>
-      <input id="s-model" type="text" placeholder="hermes-agent" />
+    <div id="settings-tabs">
+      <button class="settings-tab active" data-tab="general">General</button>
+      <button class="settings-tab" data-tab="cron">Cron</button>
+      <button class="settings-tab" data-tab="skills">Skills</button>
     </div>
 
-    <div class="setting-row">
-      <label>Send with</label>
-      <select id="s-sendkey">
-        <option value="enter">Enter key</option>
-        <option value="ctrl-enter">Ctrl + Enter</option>
-      </select>
+    <div id="settings-tab-general" class="settings-tab-content active">
+      <h2>⚙️ Settings</h2>
+      <div class="setting-group">
+        <label>Hermes API Endpoint</label>
+        <input id="s-endpoint" type="text" placeholder="http://localhost:8642/v1/chat/completions" />
+      </div>
+      <div class="setting-group">
+        <label>API Key</label>
+        <input id="s-apikey" type="password" placeholder="change-me-local-dev" />
+      </div>
+      <div class="setting-group">
+        <label>Model</label>
+        <input id="s-model" type="text" placeholder="hermes-agent" />
+      </div>
+
+      <div class="setting-row">
+        <label>Send with</label>
+        <select id="s-sendkey">
+          <option value="enter">Enter key</option>
+          <option value="ctrl-enter">Ctrl + Enter</option>
+        </select>
+      </div>
+
+      <div id="connection-status">
+        <span class="status-dot grey" id="conn-dot"></span>
+        <span id="conn-label">Not tested</span>
+      </div>
+
+      <div id="settings-actions">
+        <button class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
+        <button class="btn btn-secondary" id="cancel-settings-btn">Cancel</button>
+        <button class="btn btn-primary" id="save-settings-btn">Save</button>
+      </div>
     </div>
 
-    <div id="connection-status">
-      <span class="status-dot grey" id="conn-dot"></span>
-      <span id="conn-label">Not tested</span>
+    <div id="settings-tab-cron" class="settings-tab-content">
+      <h2>⏰ Cron Jobs</h2>
+      <div id="cron-status-banner"></div>
+      <div id="cron-jobs-list"></div>
+      <div id="cron-refresh-row">
+        <button class="btn btn-secondary" id="cron-refresh-btn">↻ Refresh</button>
+      </div>
     </div>
 
-    <div id="settings-actions">
-      <button class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
-      <button class="btn btn-secondary" id="cancel-settings-btn">Cancel</button>
-      <button class="btn btn-primary" id="save-settings-btn">Save</button>
+    <div id="settings-tab-skills" class="settings-tab-content">
+      <h2>🛠 Skills</h2>
+      <input id="skills-search" type="text" placeholder="Search skills…" />
+      <div id="skills-category-chips"></div>
+      <div id="skills-list"></div>
+      <div id="skills-refresh-row">
+        <button class="btn btn-secondary" id="skills-refresh-btn">↻ Refresh</button>
+      </div>
     </div>
   </div>
 </div>

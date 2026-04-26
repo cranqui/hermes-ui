@@ -139,4 +139,14 @@ contextBridge.exposeInMainWorld('hermesAPI', {
   cancelStreamIPC: () => {
     ipcRenderer.send('chat-cancel')
   },
+
+  // ─── Hermes CLI (cron, skills, plugins) ──────────────────────────────
+  cronList:       () => ipcRenderer.invoke('cron-list'),
+  cronStatus:     () => ipcRenderer.invoke('cron-status'),
+  cronPause:      (jobId) => ipcRenderer.invoke('cron-pause', jobId),
+  cronResume:     (jobId) => ipcRenderer.invoke('cron-resume', jobId),
+  cronRemove:     (jobId) => ipcRenderer.invoke('cron-remove', jobId),
+  skillsList:     () => ipcRenderer.invoke('skills-list'),
+  pluginsList:    () => ipcRenderer.invoke('plugins-list'),
+  pluginsToggle:  (name, enable) => ipcRenderer.invoke('plugins-toggle', name, enable),
 })

@@ -1447,6 +1447,183 @@ document.getElementById('save-settings-btn').addEventListener('click', saveSetti
 document.getElementById('test-connection-btn').addEventListener('click', testConnection)
 settingsOverlay.addEventListener('click', (e) => { if (e.target === settingsOverlay) closeSettings() })
 
+// ─── Settings tabs ──────────────────────────────────────────────────────────
+
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'))
+    document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'))
+    tab.classList.add('active')
+    const target = tab.getAttribute('data-tab')
+    document.getElementById(`settings-tab-${target}`).classList.add('active')
+  })
+})
+
+// ─── Cron Dashboard ─────────────────────────────────────────────────────────
+
+async function loadCronDashboard() {
+  const banner = document.getElementById('cron-status-banner')
+  const list = document.getElementById('cron-jobs-list')
+
+  banner.textContent = 'Loading…'
+  banner.className = ''
+  list.innerHTML = ''
+
+  const [statusRes, jobsRes] = await Promise.all([
+    window.hermesAPI.cronStatus(),
+    window.hermesAPI.cronList()
+  ])
+
+  // Status banner
+  if (!statusRes.ok) {
+    banner.textContent = '⚠ Could not reach Hermes: ' + statusRes.error
+    banner.className = 'error'
+  } else {
+    const txt = statusRes.data || ''
+    if (txt.includes('running')) {
+      banner.className = 'running'
+      banner.textContent = txt.trim()
+    } else {
+      banner.className = 'stopped'
+      banner.textContent = txt.trim() || 'Gateway not running'
+    }
+  }
+
+  // Job cards
+  if (!jobsRes.ok) {
+    list.innerHTML = `<div style="color:#c62828;font-size:13px;">Error: ${jobsRes.error}</div>`
+    return
+  }
+  const jobs = jobsRes.data || []
+  if (!jobs.length) {
+    list.innerHTML = '<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">No scheduled jobs</div>'
+    return
+  }
+  list.innerHTML = jobs.map(renderCronCard).join('')
+}
+
+function renderCronCard(job) {
+  const statusClass = job.status === 'active' ? 'active' : 'paused'
+  const lastRunHtml = job.lastRun
+    ? `<span class="${job.lastStatus === 'ok' ? 'cron-last-ok' : job.lastStatus === 'error' ? 'cron-last-error' : ''}">${job.lastRun} ${job.lastStatus || ''}</span>`
+    : '<span>Never</span>'
+  const toggleBtn = job.status === 'active'
+    ? `<button class="btn btn-secondary" onclick="toggleCron('${job.id}', false)">⏸ Pause</button>`
+    : `<button class="btn btn-secondary" onclick="toggleCron('${job.id}', true)">▶ Resume</button>`
+  return `
+    <div class="cron-card">
+      <div class="cron-card-header">
+        <span class="cron-card-name">${escapeHtml(job.name || job.id)}</span>
+        <span class="cron-card-status ${statusClass}">${job.status}</span>
+      </div>
+      <div class="cron-card-details">
+        <dt>Schedule</dt><dd><code>${escapeHtml(job.schedule || '—')}</code></dd>
+        <dt>Next run</dt><dd>${escapeHtml(job.nextRun || '—')}</dd>
+        <dt>Last run</dt><dd>${lastRunHtml}</dd>
+        ${job.skills ? `<dt>Skills</dt><dd>${escapeHtml(job.skills)}</dd>` : ''}
+        ${job.repeat ? `<dt>Repeat</dt><dd>${escapeHtml(job.repeat)}</dd>` : ''}
+        ${job.deliver ? `<dt>Deliver</dt><dd>${escapeHtml(job.deliver)}</dd>` : ''}
+      </div>
+      <div class="cron-card-actions">
+        ${toggleBtn}
+        <button class="btn btn-secondary" onclick="removeCron('${job.id}')" style="color:#c62828;">✕ Remove</button>
+      </div>
+    </div>`
+}
+
+async function toggleCron(jobId, enable) {
+  const res = enable ? await window.hermesAPI.cronResume(jobId) : await window.hermesAPI.cronPause(jobId)
+  if (!res.ok) { alert('Error: ' + res.error); return }
+  loadCronDashboard()
+}
+
+async function removeCron(jobId) {
+  if (!confirm('Remove this cron job?')) return
+  const res = await window.hermesAPI.cronRemove(jobId)
+  if (!res.ok) { alert('Error: ' + res.error); return }
+  loadCronDashboard()
+}
+
+document.getElementById('cron-refresh-btn').addEventListener('click', loadCronDashboard)
+
+// ─── Skills Navigator ────────────────────────────────────────────────────────
+
+let allSkills = []
+let activeSkillCategory = 'all'
+
+async function loadSkillsList() {
+  const container = document.getElementById('skills-list')
+  const chipsContainer = document.getElementById('skills-category-chips')
+  container.innerHTML = '<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">Loading…</div>'
+
+  const res = await window.hermesAPI.skillsList()
+  if (!res.ok) {
+    container.innerHTML = `<div style="color:#c62828;font-size:13px;">Error: ${res.error}</div>`
+    return
+  }
+  allSkills = res.data || []
+  activeSkillCategory = 'all'
+
+  // Build category chips
+  const categories = [...new Set(allSkills.map(s => s.category || 'uncategorized').filter(Boolean))].sort()
+  const counts = {}
+  allSkills.forEach(s => { const c = s.category || 'uncategorized'; counts[c] = (counts[c] || 0) + 1 })
+
+  chipsContainer.innerHTML = [
+    `<span class="skill-chip active" data-cat="all">All (${allSkills.length})</span>`,
+    ...categories.map(c => `<span class="skill-chip" data-cat="${escapeHtml(c)}">${escapeHtml(c)} (${counts[c]})</span>`)
+  ].join('')
+
+  chipsContainer.querySelectorAll('.skill-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      activeSkillCategory = chip.getAttribute('data-cat')
+      chipsContainer.querySelectorAll('.skill-chip').forEach(c => c.classList.remove('active'))
+      chip.classList.add('active')
+      renderSkillsList()
+    })
+  })
+
+  renderSkillsList()
+}
+
+function renderSkillsList() {
+  const container = document.getElementById('skills-list')
+  const query = (document.getElementById('skills-search')?.value || '').toLowerCase()
+  let skills = allSkills
+
+  if (activeSkillCategory !== 'all') {
+    skills = skills.filter(s => (s.category || 'uncategorized') === activeSkillCategory)
+  }
+  if (query) {
+    skills = skills.filter(s => s.name.toLowerCase().includes(query) || (s.category || '').toLowerCase().includes(query))
+  }
+
+  // Group by category
+  const groups = {}
+  skills.forEach(s => {
+    const cat = s.category || 'uncategorized'
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(s)
+  })
+
+  const sortedCats = Object.keys(groups).sort()
+  let html = ''
+  for (const cat of sortedCats) {
+    html += `<div class="skill-category-header">${escapeHtml(cat)}</div>`
+    for (const s of groups[cat]) {
+      const src = (s.source || 'unknown').toLowerCase()
+      html += `<div class="skill-row">
+        <span class="skill-name">${escapeHtml(s.name)}</span>
+        <span class="skill-source ${src}">${escapeHtml(s.source || '?')}</span>
+      </div>`
+    }
+  }
+  container.innerHTML = html || '<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">No matching skills</div>'
+}
+
+document.getElementById('skills-search').addEventListener('input', renderSkillsList)
+document.getElementById('skills-refresh-btn').addEventListener('click', loadSkillsList)
+
 function openSettings() {
   sEndpoint.value = settings.endpoint
   sApiKey.value   = settings.apiKey
@@ -1629,4 +1806,22 @@ window.addEventListener('unhandledrejection', (event) => {
   console.error('[Hermes Chat] Unhandled promise rejection:', event.reason)
   const msg = event.reason instanceof Error ? event.reason.message : String(event.reason)
   showError(msg)
+})
+
+// ─── Settings tab lazy-loading ───────────────────────────────────────────────
+// Override openSettings to also load data for the active tab
+const _origOpenSettings = openSettings
+openSettings = function() {
+  _origOpenSettings()
+  const activeTab = document.querySelector('.settings-tab.active')?.getAttribute('data-tab')
+  if (activeTab === 'cron') loadCronDashboard()
+  if (activeTab === 'skills') loadSkillsList()
+}
+
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const target = tab.getAttribute('data-tab')
+    if (target === 'cron') setTimeout(loadCronDashboard, 50)
+    if (target === 'skills') setTimeout(loadSkillsList, 50)
+  })
 })
