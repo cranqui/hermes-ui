@@ -1229,6 +1229,51 @@ function hideCommandMenu() {
   commandMenuIdx = -1
 }
 
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
+
+document.addEventListener('keydown', (e) => {
+  const mod = e.metaKey || e.ctrlKey
+  if (!mod) return
+
+  // Skip if focus is inside textarea/input (don't steal native shortcuts mid-type)
+  const active = document.activeElement
+  const isTyping = active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')
+  // Only skip for shortcuts that collide with text editing
+  const textSafeKeys = ['n', 'e']  // Cmd+N, Cmd+E could conflict; others safe
+  const key = e.key.toLowerCase()
+
+  if (isTyping && textSafeKeys.includes(key)) return
+
+  switch (true) {
+    // Cmd+N → New chat
+    case key === 'n' && !e.shiftKey:
+      e.preventDefault(); newChat(); msgInput.focus(); break
+    // Cmd+, → Settings
+    case key === ',':
+      e.preventDefault(); openSettings(); break
+    // Cmd+K → Focus search
+    case key === 'k' && !e.shiftKey:
+      e.preventDefault(); if (searchInput) searchInput.focus(); break
+    // Cmd+Shift+P → Toggle pin on active chat
+    case key === 'p' && e.shiftKey:
+      e.preventDefault(); if (activeChatId) togglePin(activeChatId); break
+    // Cmd+Shift+C → Clear active chat
+    case key === 'c' && e.shiftKey:
+      e.preventDefault(); handleSlashCommand('/clear', ''); break
+    // Cmd+E → Export active chat
+    case key === 'e':
+      e.preventDefault(); handleSlashCommand('/export', ''); break
+  }
+})
+
+// Escape → close settings overlay (when open) or command menu
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (settingsOverlay.classList.contains('open')) { closeSettings(); return }
+    if (commandMenuOpen) { hideCommandMenu(); return }
+  }
+})
+
 // ─── File attachment ──────────────────────────────────────────────────────────
 
 // attachedFiles: [{ name, content }]  — content is plain text (or a note for binary)
