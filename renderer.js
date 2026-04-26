@@ -1878,24 +1878,33 @@ function openRightSidebar() {
   if (!rightSidebar.classList.contains('open')) {
     rightSidebar.classList.add('open')
   }
+  tasksBtn?.classList.add('active')
 }
 
 function closeRightSidebar() {
   rightSidebar.classList.remove('open')
+  tasksBtn?.classList.remove('active')
 }
 
 // Close button in right sidebar header
 rsCloseBtn?.addEventListener('click', closeRightSidebar)
 
+// Tasks button in input toolbar toggles right sidebar
+const tasksBtn = document.getElementById('tasks-btn')
+function toggleRightSidebar() {
+  if (rightSidebar.classList.contains('open')) {
+    closeRightSidebar()
+  } else {
+    openRightSidebar()
+  }
+}
+tasksBtn?.addEventListener('click', toggleRightSidebar)
+
 // Cmd+Shift+T (Mac) / Ctrl+Shift+T (Win/Linux) toggles right sidebar
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'T') {
     e.preventDefault()
-    if (rightSidebar.classList.contains('open')) {
-      closeRightSidebar()
-    } else if (currentTasks.length > 0) {
-      openRightSidebar()
-    }
+    toggleRightSidebar()
   }
 })
 
