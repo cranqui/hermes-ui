@@ -1906,6 +1906,7 @@ function toolEmoji(name) {
 }
 
 let toolCalls = []   // { id, name, preview, status: 'running'|'completed', count, type: 'tool'|'reasoning', duration, error, emoji }
+let toolIdCounter = 0
 
 function addToolCall(name, preview, emoji) {
   if (!name) return
