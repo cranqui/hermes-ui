@@ -808,70 +808,31 @@
     }
 
     /* ── Context pill (in input toolbar) ── */
+    /* Context bar pill — matches model-pill height/shape */
     #ctx-pill {
-      display: none; /* shown once first response arrives */
-      align-items: center; gap: 7px;
+      display: none;
+      align-items: center;
       background: #e4e5ec;
       border-radius: 20px;
       padding: 0 12px;
-      height: 34px; min-width: 70px;
+      height: 34px; width: 90px; flex-shrink: 0;
       cursor: default;
-      position: relative;
-      overflow: hidden;
       transition: background 0.12s;
     }
     #ctx-pill.visible { display: flex; }
     #ctx-pill:hover { background: #d4d5de; }
 
-    /* Tooltip shown on hover */
-    #ctx-text {
-      display: none;
-      position: absolute;
-      bottom: calc(100% + 8px);
-      left: 50%; transform: translateX(-50%);
-      font-size: 11px;
-      color: #fff;
-      background: #1a1a1e;
-      border-radius: 6px;
-      padding: 4px 8px;
-      white-space: nowrap;
-      font-variant-numeric: tabular-nums;
-      letter-spacing: -0.01em;
-      line-height: 1;
-      pointer-events: none;
-      z-index: 10;
-    }
-    #ctx-pill:hover #ctx-text { display: block; }
-
-    /* Coloured dot indicator */
-    #ctx-dot {
-      width: 7px; height: 7px; flex-shrink: 0;
-      border-radius: 50%;
-      background: #22c55e;
-      transition: background-color 0.4s ease;
-    }
-    #ctx-dot.warm { background: #f59e0b; }
-    #ctx-dot.hot  { background: #ef4444; }
-
-    /* Token label */
-    #ctx-label {
-      font-size: 12px;
-      color: var(--text-secondary);
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-      letter-spacing: -0.01em;
-    }
-
-    /* Thin progress strip at very bottom of the pill */
+    /* Track inside the pill */
     #ctx-track {
-      position: absolute;
-      bottom: 0; left: 0; right: 0;
-      height: 3px;
-      background: rgba(0,0,0,0.08);
+      width: 100%; height: 6px;
+      background: rgba(0,0,0,0.12);
+      border-radius: 3px;
+      overflow: hidden;
     }
     #ctx-fill {
       height: 100%; width: 0%;
       background: #22c55e;
+      border-radius: 3px;
       transition: width 0.5s ease, background-color 0.4s ease;
     }
     #ctx-fill.warm { background: #f59e0b; }
@@ -976,11 +937,8 @@
             </svg>
           </button>
 
-          <!-- Context usage pill -->
-          <div id="ctx-pill" title="Context window usage">
-            <span id="ctx-text">0 / —</span>
-            <span id="ctx-dot"></span>
-            <span id="ctx-label">CTX</span>
+          <!-- Context usage bar -->
+          <div id="ctx-pill">
             <div id="ctx-track"><div id="ctx-fill"></div></div>
           </div>
 

@@ -531,11 +531,8 @@ function syncModelPill() {
 // ─── Context pill (in input toolbar) ────────────────────────────────────────
 
 function updateContextPill() {
-  const pill  = document.getElementById('ctx-pill')
-  const text  = document.getElementById('ctx-text')
-  const fill  = document.getElementById('ctx-fill')
-  const dot   = document.getElementById('ctx-dot')
-  const label = document.getElementById('ctx-label')
+  const pill = document.getElementById('ctx-pill')
+  const fill = document.getElementById('ctx-fill')
   if (!pill) return
 
   if (contextWindow == null && contextUsed == null) {
@@ -546,25 +543,17 @@ function updateContextPill() {
   pill.classList.add('visible')
 
   if (contextWindow) {
-    const used   = contextUsed ?? 0
-    const pct    = Math.min(100, Math.round(used / contextWindow * 100))
-    const level  = pct >= 80 ? 'hot' : pct >= 50 ? 'warm' : ''
-    // Tooltip: full breakdown
-    text.textContent  = `${formatTokens(used)} / ${formatTokens(contextWindow)} tokens`
-    // Dot: coloured indicator
-    dot.className  = level
-    // Label: compact percentage
-    label.textContent = `${pct}%`
-    // Bottom track
+    const used  = contextUsed ?? 0
+    const pct   = Math.min(100, Math.round(used / contextWindow * 100))
+    const level = pct >= 80 ? 'hot' : pct >= 50 ? 'warm' : ''
+    pill.title       = `${formatTokens(used)} / ${formatTokens(contextWindow)} tokens (${pct}%)`
     fill.style.width = pct + '%'
     fill.className   = level
   } else {
-    const usedTok = contextUsed ?? 0
-    text.textContent  = `${formatTokens(usedTok)} tokens`
-    dot.className  = ''
-    label.textContent = formatTokens(usedTok)
-    fill.style.width  = '0%'
-    fill.className    = ''
+    const used = contextUsed ?? 0
+    pill.title       = `${formatTokens(used)} tokens used`
+    fill.style.width = '0%'
+    fill.className   = ''
   }
 }
 
