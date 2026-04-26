@@ -643,6 +643,9 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
           if (parsed.model) sendChatEvent(event, 'model', { model: parsed.model })
           const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
           if (sid) sendChatEvent(event, 'session', { sessionId: sid })
+          if (parsed.tasks && Array.isArray(parsed.tasks)) {
+            sendChatEvent(event, 'tasks', { tasks: parsed.tasks })
+          }
         } catch (_) {}
       }
     })

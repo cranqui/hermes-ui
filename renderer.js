@@ -998,6 +998,9 @@ function startIPCStream(chat, bubble) {
         }
         errorStream(bubble, accumulated, payload.message || 'Unknown error')
         break
+      case 'tasks':
+        if (payload && payload.tasks) updateTaskList(payload.tasks)
+        break
     }
   })
 
@@ -1866,6 +1869,7 @@ window.addEventListener('unhandledrejection', (event) => {
 const rightSidebar       = document.getElementById('right-sidebar')
 const taskListEl         = document.getElementById('task-list')
 const rsCollapseBtn      = document.getElementById('right-sidebar-collapse-btn')
+const rsCloseBtn         = document.getElementById('right-sidebar-close-btn')
 
 let currentTasks = []
 let taskSectionCollapsed = false
@@ -1876,6 +1880,25 @@ function openRightSidebar() {
   }
 }
 
+function closeRightSidebar() {
+  rightSidebar.classList.remove('open')
+}
+
+// Close button in right sidebar header
+rsCloseBtn?.addEventListener('click', closeRightSidebar)
+
+// Cmd+Shift+T (Mac) / Ctrl+Shift+T (Win/Linux) toggles right sidebar
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'T') {
+    e.preventDefault()
+    if (rightSidebar.classList.contains('open')) {
+      closeRightSidebar()
+    } else if (currentTasks.length > 0) {
+      openRightSidebar()
+    }
+  }
+})
+
 function updateTaskList(tasks) {
   if (!Array.isArray(tasks) || tasks.length === 0) return
   currentTasks = tasks
@@ -1885,39 +1908,90 @@ function updateTaskList(tasks) {
 
 function finalizeTaskList() {
   // Any task still marked in_progress gets completed when stream ends
-  currentTasks = currentTasks.map(t =>
-    t.status === 'in_progress' ? { ...t, status: 'completed' } : t
-  )
+  // Any task still marked pending gets marked as skipped
+  currentTasks = currentTasks.map(t => {
+    if (t.status === 'in_progress') return { ...t, status: 'completed' }
+    if (t.status === 'pending') return { ...t, status: 'skipped' }
+    return t
+  })
   renderTaskList()
 }
 
 function renderTaskList() {
   if (taskSectionCollapsed) {
     taskListEl.innerHTML = ''
+    updateProgressTitle()
     return
   }
 
-  taskListEl.innerHTML = currentTasks.map((task, idx) => {
-    const isDone    = task.status === 'completed'
-    const isActive  = task.status === 'in_progress'
-    const isPending = task.status === 'pending'
+  // Group tasks: In Progress first, then Pending, then Completed
+  const inProgress = currentTasks.filter(t => t.status === 'in_progress')
+  const pending    = currentTasks.filter(t => t.status === 'pending')
+  const completed  = currentTasks.filter(t => t.status === 'completed')
+  const skipped    = currentTasks.filter(t => t.status === 'skipped')
 
-    const iconClass  = isDone ? 'done' : isActive ? 'active' : 'pending'
-    const itemClass  = isDone ? '' : isActive ? 'active' : 'pending'
+  let html = ''
 
-    let iconContent = ''
-    if (isDone) {
-      // Checkmark SVG
-      iconContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
-    } else if (isActive) {
-      iconContent = String(idx + 1)
-    }
+  if (inProgress.length) {
+    html += `<div class="task-section-label">In Progress</div>`
+    html += inProgress.map((task, idx) => renderTaskItem(task, currentTasks.indexOf(task))).join('')
+  }
+  if (pending.length) {
+    html += `<div class="task-section-label">Pending</div>`
+    html += pending.map(task => renderTaskItem(task, currentTasks.indexOf(task))).join('')
+  }
+  if (completed.length) {
+    html += `<div class="task-section-label">Completed</div>`
+    html += completed.map(task => renderTaskItem(task, currentTasks.indexOf(task))).join('')
+  }
+  if (skipped.length) {
+    html += `<div class="task-section-label">Skipped</div>`
+    html += skipped.map(task => renderTaskItem(task, currentTasks.indexOf(task))).join('')
+  }
 
-    return `<div class="task-item ${itemClass}">
-      <div class="task-icon ${iconClass}">${iconContent}</div>
-      <span class="task-subject">${escapeHtml(task.subject)}</span>
-    </div>`
-  }).join('')
+  taskListEl.innerHTML = html
+  updateProgressTitle()
+}
+
+function renderTaskItem(task, originalIdx) {
+  const isDone    = task.status === 'completed'
+  const isActive  = task.status === 'in_progress'
+  const isPending = task.status === 'pending'
+  const isSkipped = task.status === 'skipped'
+
+  let iconClass = 'pending'
+  let itemClass = 'pending'
+  let iconContent = ''
+
+  if (isDone) {
+    iconClass = 'done'
+    itemClass = ''
+    iconContent = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+  } else if (isActive) {
+    iconClass = 'active'
+    itemClass = 'active'
+    iconContent = String(originalIdx + 1)
+  } else if (isSkipped) {
+    iconClass = 'skipped'
+    itemClass = 'skipped'
+    iconContent = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>`
+  }
+
+  return `<div class="task-item ${itemClass}">
+    <div class="task-icon ${iconClass}">${iconContent}</div>
+    <span class="task-subject">${escapeHtml(task.subject)}</span>
+  </div>`
+}
+
+function updateProgressTitle() {
+  const done = currentTasks.filter(t => t.status === 'completed' || t.status === 'skipped').length
+  const total = currentTasks.length
+  const titleEl = document.getElementById('right-sidebar-title')
+  if (total > 0) {
+    titleEl.textContent = `Progress (${done}/${total})`
+  } else {
+    titleEl.textContent = 'Progress'
+  }
 }
 
 // Collapse/expand the task list section (not the sidebar itself)
