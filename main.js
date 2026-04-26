@@ -67,10 +67,10 @@ app.whenReady().then(() => {
         'Content-Security-Policy': [
           "default-src 'none'; " +
           "script-src 'self'; " +
-          "style-src 'self' 'unsafe-inline'; " +
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
           "img-src 'self' data: https:; " +
           "connect-src http://localhost:8642 http://127.0.0.1:8642 http://localhost:8643 http://127.0.0.1:8643; " +
-          "font-src 'self'; " +
+          "font-src 'self' https://fonts.gstatic.com; " +
           "media-src 'none'; " +
           "object-src 'none'; " +
           "base-uri 'self'; " +

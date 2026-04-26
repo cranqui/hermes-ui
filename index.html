@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hermes Chat</title>
+  <!-- Display font: Bricolage Grotesque — bold variable grotesque, HEY-inspired -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&display=swap" rel="stylesheet">
   <!-- All scripts are external to satisfy script-src 'self' CSP -->
   <script src="node_modules/marked/marked.min.js"></script>
   <script src="node_modules/dompurify/dist/purify.min.js"></script>
@@ -261,16 +265,25 @@
     }
 
     #topbar-title {
-      font-size: 13px; font-weight: 500;
-      color: var(--text-secondary);
+      font-family: 'Bricolage Grotesque', -apple-system, sans-serif;
+      font-size: 15px;
+      font-weight: 800;
+      font-variation-settings: 'wdth' 100, 'opsz' 20;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
       pointer-events: none;
       cursor: pointer;
       -webkit-app-region: no-drag;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 400px;
     }
     #topbar-title.renamable { pointer-events: auto; }
-    #topbar-title.renamable:hover { color: var(--text-primary); text-decoration: underline dotted; }
+    #topbar-title.renamable:hover { text-decoration: underline dotted; }
     #topbar-title-input {
-      font-size: 13px; font-weight: 500;
+      font-family: 'Bricolage Grotesque', -apple-system, sans-serif;
+      font-size: 15px; font-weight: 800;
       color: var(--text-primary);
       background: var(--bg-input);
       border: 1px solid var(--accent);
