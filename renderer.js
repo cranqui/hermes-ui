@@ -152,35 +152,60 @@ function initMarked() {
 }
 
 // ─── Streaming Markdown: delta renderer ───────────────────────────────────────
-// Instead of re-parsing the entire text on every chunk, we track the render
-// state and only update what changed. Full re-render on stream completion.
+// Instead of re-parsing the entire text on every chunk, we debounce the DOM
+// update during streaming. Text accumulates in memory; the bubble is updated
+// every ~150ms to avoid excessive innerHTML rewrites + highlightCodeBlocks scans.
+// Full re-render + highlighting on stream completion.
 
 const _streamState = { prevLen: 0, prevRendered: '', inCodeFence: false }
 
 function renderStreamChunk(accumulated) {
-  // On stream completion or first chunk, just do a full render
-  if (accumulated.length < _streamState.prevLen + 5) {
-    // Small delta — do full render (marked is fast enough for incremental)
-    // But track code fence state to close unclosed fences
-    const openFences = (accumulated.match(/```/g) || []).length
-    let html = renderMarkdown(accumulated)
-    // If odd number of code fence markers, close the last one
-    if (openFences % 2 !== 0) {
-      html += '</code></pre>'
-    }
-    _streamState.prevLen = accumulated.length
-    _streamState.prevRendered = html
-    return html
+  const openFences = (accumulated.match(/```/g) || []).length
+  let html = renderMarkdown(accumulated)
+  // If odd number of code fence markers, close the last one
+  if (openFences % 2 !== 0) {
+    html += '</code></pre>'
   }
-
   _streamState.prevLen = accumulated.length
-  return renderMarkdown(accumulated)
+  _streamState.prevRendered = html
+  return html
 }
 
 function resetStreamState() {
   _streamState.prevLen = 0
   _streamState.prevRendered = ''
   _streamState.inCodeFence = false
+}
+
+// Debounced DOM update for streaming: renders markdown at most every 150ms.
+// The accumulated text is always up-to-date; only the visual repaint is throttled.
+let _renderDebounceTimer = null
+let _renderDebounceAccumulated = ''
+let _renderDebounceBubble = null
+const STREAM_RENDER_INTERVAL = 150  // ms
+
+function debouncedStreamRender(bubble, accumulated) {
+  _renderDebounceAccumulated = accumulated
+  _renderDebounceBubble = bubble
+  if (_renderDebounceTimer) return  // already scheduled
+  _renderDebounceTimer = setTimeout(() => {
+    _renderDebounceTimer = null
+    if (_renderDebounceBubble && _renderDebounceAccumulated) {
+      _renderDebounceBubble.innerHTML = renderStreamChunk(_renderDebounceAccumulated)
+      _renderDebounceBubble.classList.add('typing-cursor')
+      if (!userScrolledUp) scrollToBottom()
+    }
+  }, STREAM_RENDER_INTERVAL)
+}
+
+function flushStreamRender() {
+  if (_renderDebounceTimer) {
+    clearTimeout(_renderDebounceTimer)
+    _renderDebounceTimer = null
+  }
+  if (_renderDebounceBubble && _renderDebounceAccumulated) {
+    _renderDebounceBubble.innerHTML = renderStreamChunk(_renderDebounceAccumulated)
+  }
 }
 
 // ─── HTML sanitisation ───────────────────────────────────────────────────────
@@ -837,10 +862,7 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
     const ctrl = window.hermesAPI.connectStream(streamId, {
       onChunk: (content) => {
         accumulated += content
-        bubble.innerHTML = renderStreamChunk(accumulated)
-        bubble.classList.add('typing-cursor')
-        highlightCodeBlocks(bubble)
-        if (!userScrolledUp) scrollToBottom()
+        debouncedStreamRender(bubble, accumulated)
         // Update inflight snapshot (throttled)
         throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated, realModel || null)
       },
@@ -892,10 +914,7 @@ function startIPCStream(chat, bubble) {
     switch (type) {
       case 'chunk':
         accumulated += payload.content
-        bubble.innerHTML = renderStreamChunk(accumulated)
-        bubble.classList.add('typing-cursor')
-        highlightCodeBlocks(bubble)
-        if (!userScrolledUp) scrollToBottom()
+        debouncedStreamRender(bubble, accumulated)
         throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated, realModel || null)
         break
       case 'model':
@@ -937,6 +956,8 @@ function startIPCStream(chat, bubble) {
 }
 
 function finishStream(bubble, accumulated, chat) {
+  // Flush any pending debounced render
+  flushStreamRender()
   clearInflight()
   _inflightThrottleSlot = null
   bubble.classList.remove('typing-cursor')
@@ -963,6 +984,8 @@ function finishStream(bubble, accumulated, chat) {
 }
 
 function errorStream(bubble, accumulated, err) {
+  // Flush any pending debounced render so partial content is visible
+  flushStreamRender()
   clearInflight()
   _inflightThrottleSlot = null
   bubble.classList.remove('typing-cursor')
@@ -1028,6 +1051,7 @@ function resendLastUserMessage() {
 
 // Cancel current stream (called when switching chats or on explicit cancel)
 function cancelCurrentStream() {
+  flushStreamRender()
   clearInflight()
   _inflightThrottleSlot = null
   if (activeStreamCtrl) {
