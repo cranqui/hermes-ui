@@ -507,6 +507,7 @@ const chatList       = document.getElementById('chat-list')
 const msgContainer   = document.getElementById('messages')
 const welcome        = document.getElementById('welcome')
 const topbarTitle    = document.getElementById('topbar-title')
+const topbarTitleInput = document.getElementById('topbar-title-input')
 const sendBtn        = document.getElementById('send-btn')
 const msgInput       = document.getElementById('message-input')
 const attachmentsRow = document.getElementById('attachments-row')
@@ -743,7 +744,44 @@ function appendMessageBubble(role, content, streaming = false, meta = {}) {
 function updateTopbar() {
   const chat = getActiveChat()
   topbarTitle.textContent = chat ? chat.title : 'Hermes Chat'
+  if (chat) { topbarTitle.classList.add('renamable') } else { topbarTitle.classList.remove('renamable') }
 }
+
+// ─── Chat rename (click topbar title → inline edit) ──────────────────────────
+
+topbarTitle.addEventListener('click', () => {
+  const chat = getActiveChat()
+  if (!chat) return
+  topbarTitleInput.value = chat.title
+  topbarTitle.style.display = 'none'
+  topbarTitleInput.style.display = ''
+  topbarTitleInput.focus()
+  topbarTitleInput.select()
+})
+
+function commitRename() {
+  const chat = getActiveChat()
+  if (!chat) { cancelRename(); return }
+  const newName = topbarTitleInput.value.trim().slice(0, 80)
+  if (newName && newName !== chat.title) {
+    chat.title = newName
+    saveActiveChat()
+    renderSidebar()
+  }
+  cancelRename()
+}
+
+function cancelRename() {
+  topbarTitleInput.style.display = 'none'
+  topbarTitle.style.display = ''
+  updateTopbar()
+}
+
+topbarTitleInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+  if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
+})
+topbarTitleInput.addEventListener('blur', commitRename)
 
 function setSendEnabled(enabled) {
   sendBtn.disabled = !enabled

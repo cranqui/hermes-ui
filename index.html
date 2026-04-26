@@ -213,6 +213,20 @@
       font-size: 13px; font-weight: 500;
       color: var(--text-secondary);
       pointer-events: none;
+      cursor: pointer;
+    }
+    #topbar-title.renamable { pointer-events: auto; }
+    #topbar-title.renamable:hover { color: var(--text-primary); text-decoration: underline dotted; }
+    #topbar-title-input {
+      font-size: 13px; font-weight: 500;
+      color: var(--text-primary);
+      background: var(--bg-input);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 2px 8px;
+      outline: none;
+      width: 200px;
+      text-align: center;
     }
 
     /* ── Messages ── */
@@ -767,6 +781,7 @@
     <div id="topbar">
       <span class="status-dot grey" id="topbar-dot"></span>
       <span id="topbar-title">Hermes Chat</span>
+      <input id="topbar-title-input" type="text" maxlength="80" style="display:none;" />
     </div>
 
     <!-- Welcome screen (shown when no chat is active) -->
