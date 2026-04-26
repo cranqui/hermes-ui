@@ -929,11 +929,14 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
         }
       },
       onToolProgress: (data) => {
-        // data comes from Hermes API: { tool, emoji, label } for started
-        // Future: { tool, duration, error } for completed
+        // data from Hermes API: { event_type, tool, emoji, label, duration, error, text }
+        // event_type: tool.started | tool.completed | reasoning.available
         if (data.event_type === 'tool.completed') {
-          markToolCompleted(data.tool || data.name)
+          markToolCompleted(data.tool || data.name, data.duration, data.error)
+        } else if (data.event_type === 'reasoning.available') {
+          addReasoningEntry(data.text || '')
         } else {
+          // tool.started (default for backward compat)
           addToolCall(data.tool || data.name, data.label || data.preview || '', data.emoji || '')
         }
       },
@@ -1003,10 +1006,12 @@ function startIPCStream(chat, bubble) {
         errorStream(bubble, accumulated, payload.message || 'Unknown error')
         break
       case 'tool_progress':
-        // data from Hermes API: { tool, emoji, label }
+        // data from Hermes API: { event_type, tool, emoji, label, duration, error, text }
         if (payload) {
           if (payload.event_type === 'tool.completed') {
-            markToolCompleted(payload.tool || payload.name)
+            markToolCompleted(payload.tool || payload.name, payload.duration, payload.error)
+          } else if (payload.event_type === 'reasoning.available') {
+            addReasoningEntry(payload.text || '')
           } else if (payload.tool || payload.name) {
             addToolCall(payload.tool || payload.name, payload.label || payload.preview || '', payload.emoji || '')
           }
@@ -1900,14 +1905,19 @@ function toolEmoji(name) {
   return TOOL_EMOJIS[name] || '⚙️'
 }
 
-let toolCalls = []   // { id, name, preview, status: 'running'|'completed', count }
-let toolIdCounter = 0
+let toolCalls = []   // { id, name, preview, status: 'running'|'completed', count, type: 'tool'|'reasoning', duration, error, emoji }
 
 function addToolCall(name, preview, emoji) {
   if (!name) return
 
+  // When a new tool starts, mark any running reasoning entry as completed
+  const runningReasoning = toolCalls.find(t => t.type === 'reasoning' && t.status === 'running')
+  if (runningReasoning) {
+    runningReasoning.status = 'completed'
+  }
+
   // If same tool name is already running, update it (increment count)
-  const existing = toolCalls.find(t => t.name === name && t.status === 'running')
+  const existing = toolCalls.find(t => t.name === name && t.status === 'running' && t.type === 'tool')
   if (existing) {
     if (preview) existing.preview = preview
     existing.count = (existing.count || 1) + 1
@@ -1918,21 +1928,44 @@ function addToolCall(name, preview, emoji) {
   // If same tool was completed, start a new entry
   const tool = {
     id: ++toolIdCounter,
+    type: 'tool',
     name: name,
     preview: preview || '',
     emoji: emoji || '',           // emoji from Hermes API (preferred)
     status: 'running',
     count: 1,
+    duration: 0,
+    error: false,
   }
   toolCalls.push(tool)
   openRightSidebar()
   renderToolList()
 }
 
-function markToolCompleted(name) {
-  const running = toolCalls.find(t => t.name === name && t.status === 'running')
+function addReasoningEntry(text) {
+  if (!text) return
+  // Truncate to first 80 chars
+  const preview = text.length > 80 ? text.substring(0, 77) + '...' : text
+  const entry = {
+    id: ++toolIdCounter,
+    type: 'reasoning',
+    name: 'Thinking',
+    preview: preview,
+    emoji: '🧠',
+    status: 'running',
+    count: 1,
+  }
+  toolCalls.push(entry)
+  openRightSidebar()
+  renderToolList()
+}
+
+function markToolCompleted(name, duration, error) {
+  const running = toolCalls.find(t => t.name === name && t.status === 'running' && t.type === 'tool')
   if (running) {
     running.status = 'completed'
+    if (duration) running.duration = duration
+    if (error) running.error = error
     renderToolList()
   }
 }
@@ -1959,12 +1992,14 @@ function renderToolList() {
     const tool = toolCalls[i]
     const emoji = tool.emoji || toolEmoji(tool.name)
     const isRunning = tool.status === 'running'
+    const isReasoning = tool.type === 'reasoning'
     const countBadge = tool.count > 1 ? `<span class="tool-count">×${tool.count}</span>` : ''
+    const durationStr = tool.duration > 0 ? `<span class="tool-duration">${tool.duration.toFixed(1)}s</span>` : ''
 
-    html += `<div class="tool-item ${isRunning ? 'running' : 'completed'}">
+    html += `<div class="tool-item ${isRunning ? 'running' : 'completed'} ${isReasoning ? 'reasoning' : ''}">
       <div class="tool-emoji">${emoji}</div>
       <div class="tool-info">
-        <div class="tool-name">${escapeHtml(tool.name)}${countBadge}</div>
+        <div class="tool-name">${escapeHtml(tool.name)}${countBadge}${durationStr}</div>
         ${tool.preview ? `<div class="tool-preview">${escapeHtml(tool.preview)}</div>` : ''}
       </div>
     </div>`
@@ -1979,9 +2014,9 @@ function updateToolTitle() {
   const total = toolCalls.length
   if (total > 0) {
     const running = toolCalls.filter(t => t.status === 'running').length
-    titleEl.textContent = running > 0 ? `Tools (${running} active)` : `Tools (${total})`
+    titleEl.textContent = running > 0 ? `Activity (${running} active)` : `Activity (${total})`
   } else {
-    titleEl.textContent = 'Tools'
+    titleEl.textContent = 'Activity'
   }
 }
 

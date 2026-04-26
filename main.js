@@ -417,15 +417,28 @@ function startHermesRequest(streamState, params) {
         const data = trimmed.slice(6)
 
         // Hermes tool progress events: "event: hermes.tool.progress"
-        // These carry {tool, emoji, label} — forward to client as tool_progress
+        // These carry {event_type, tool, emoji, label, duration, error, text}
+        // event_type: tool.started | tool.completed | reasoning.available
         if (currentEventType === 'hermes.tool.progress') {
           try {
             const payload = JSON.parse(data)
-            pushEvent(streamState, 'tool_progress', {
+            const eventType = payload.event_type || 'tool.started'
+            const forward = {
+              event_type: eventType,
               tool: payload.tool || payload.name || '',
               emoji: payload.emoji || '',
               label: payload.label || payload.preview || '',
-            })
+            }
+            // Include completion-specific fields
+            if (eventType === 'tool.completed') {
+              forward.duration = payload.duration || 0
+              forward.error = payload.error || false
+            }
+            // Include reasoning text
+            if (eventType === 'reasoning.available') {
+              forward.text = payload.text || ''
+            }
+            pushEvent(streamState, 'tool_progress', forward)
           } catch (_) {}
           continue
         }
@@ -663,11 +676,21 @@ ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => 
         if (currentEventType === 'hermes.tool.progress') {
           try {
             const payload = JSON.parse(data)
-            sendChatEvent(event, 'tool_progress', {
+            const eventType = payload.event_type || 'tool.started'
+            const forward = {
+              event_type: eventType,
               tool: payload.tool || payload.name || '',
               emoji: payload.emoji || '',
               label: payload.label || payload.preview || '',
-            })
+            }
+            if (eventType === 'tool.completed') {
+              forward.duration = payload.duration || 0
+              forward.error = payload.error || false
+            }
+            if (eventType === 'reasoning.available') {
+              forward.text = payload.text || ''
+            }
+            sendChatEvent(event, 'tool_progress', forward)
           } catch (_) {}
           continue
         }
