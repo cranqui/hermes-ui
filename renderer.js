@@ -314,7 +314,14 @@ function chatKey(id) { return `hermes_chat:${id}` }
 function loadState() {
   try {
     const s = localStorage.getItem('hermes_settings')
-    if (s) settings = { ...DEFAULT_SETTINGS, ...JSON.parse(s) }
+    if (s) {
+      const parsed = JSON.parse(s)
+      // Sanitize sendKey — only allow known values to prevent corruption
+      if (parsed.sendKey && !['enter', 'ctrl-enter'].includes(parsed.sendKey)) {
+        parsed.sendKey = 'enter'
+      }
+      settings = { ...DEFAULT_SETTINGS, ...parsed }
+    }
 
     // Try per-chat layout first; fall back to legacy single-blob
     const idx = localStorage.getItem(CHATS_INDEX_KEY)
@@ -1124,18 +1131,17 @@ msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Tab')       { e.preventDefault(); selectCommandMenuItem(); return }
   }
 
-  if (settings.sendKey === 'ctrl-enter') {
-    // Ctrl+Enter sends, plain Enter inserts newline
-    if (e.key === 'Enter' && e.ctrlKey) {
+  if (e.key === 'Enter') {
+    const ctrlEnterMode = settings.sendKey === 'ctrl-enter'
+    const shouldSend = ctrlEnterMode ? e.ctrlKey : !e.shiftKey
+    const shouldNewline = ctrlEnterMode ? !e.ctrlKey : e.shiftKey
+
+    if (!shouldNewline) {
+      // Prevent the textarea from inserting a newline in all non-newline cases
       e.preventDefault()
-      if (!sendBtn.disabled) sendMessage()
+      if (shouldSend && !sendBtn.disabled) sendMessage()
     }
-  } else {
-    // Default: Enter sends, Shift+Enter inserts newline
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      if (!sendBtn.disabled) sendMessage()
-    }
+    // shouldNewline === true: fall through so the textarea adds a newline naturally
   }
 })
 
@@ -1792,6 +1798,9 @@ function syncPerChatModel(chat) {
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 loadState()
+// Re-persist settings immediately so any sanitised values (e.g. corrupted sendKey)
+// are written back to localStorage and don't survive a reload
+saveState()
 migrateTimestamps()
 recoverInflight()  // Restore partial conversation if app crashed mid-stream
 syncModelPill()
