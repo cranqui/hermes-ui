@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, session } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, session, safeStorage } = require('electron')
 const path = require('path')
 const http = require('http')
 const https = require('https')
@@ -16,7 +16,7 @@ function createWindow() {
     minWidth: 700,
     minHeight: 500,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#f9f9fb',
+    backgroundColor: '#1a1a1e',
     icon: path.join(__dirname, 'assets', 'icon.icns'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -564,205 +564,44 @@ function cleanupStream(streamId) {
   activeStreams.delete(streamId)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// LEGACY IPC — Consolidated single-channel events (typed payloads)
-// ═══════════════════════════════════════════════════════════════════════════════
-// Instead of 7 separate IPC channels (chat-stream-chunk, -done, -error, -usage,
-// -model, -session, chat-cancel), we now use a single 'chat-event' channel.
-// Each event has a `type` field and a `payload` field. The renderer handles them
-// via one listener with a switch statement — no listener accumulation possible.
-//
-// Event types: chunk, done, error, usage, model, session
+// ─── LEGACY IPC streaming removed ────────────────────────────────────────────
+// The IPC chat-stream / chat-cancel / chat-event path has been removed.
+// All streaming now goes through the local HTTP proxy on port 8643.
+// The proxy starts before the BrowserWindow (see startProxyServer above),
+// so it is always available when the renderer loads.
 
-let activeRequest = null
-let activeChatId = null
 
-function sendChatEvent(event, type, payload) {
-  event.sender.send('chat-event', { type, payload })
-}
+// ─── IPC: API key secure storage (Electron safeStorage) ─────────────────────
+// Encrypts the API key using the OS keychain (macOS Keychain, Windows DPAPI,
+// Linux libsecret). Falls back gracefully if safeStorage is unavailable.
+// Stored in app userData dir as `apikey.enc` — never in localStorage.
 
-ipcMain.on('chat-stream', (event, { messages, settings, sessionId, chatId }) => {
-  if (activeChatId === chatId) {
-    sendChatEvent(event, 'error', { message: 'A message is already being sent in this chat.' })
-    return
-  }
+const KEY_FILE_PATH = () => path.join(app.getPath('userData'), 'apikey.enc')
 
-  const { endpoint, apiKey, model } = settings
-  const url = new URL(endpoint)
-  const isHttps = url.protocol === 'https:'
-  const transport = isHttps ? https : http
-
-  const body = JSON.stringify({
-    model: model || 'hermes-agent',
-    messages,
-    stream: true,
-  })
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(body),
-  }
-
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`
-  }
-
-  if (sessionId) {
-    headers['X-Hermes-Session-Id'] = sessionId
-  }
-
-  const options = {
-    hostname: url.hostname,
-    port: url.port || (isHttps ? 443 : 80),
-    path: url.pathname,
-    method: 'POST',
-    headers,
-  }
-
-  let doneSent = false
-
-  const req = transport.request(options, (apiRes) => {
-    // Handle non-2xx status codes immediately
-    if (apiRes.statusCode < 200 || apiRes.statusCode >= 300) {
-      let errBody = ''
-      apiRes.on('data', (chunk) => { errBody += chunk.toString() })
-      apiRes.on('end', () => {
-        if (!doneSent) {
-          doneSent = true
-          activeChatId = null
-          let msg = `HTTP ${apiRes.statusCode}`
-          try { const j = JSON.parse(errBody); msg = j.error?.message || j.error || j.message || msg } catch (_) {}
-          if (apiRes.statusCode === 401 || apiRes.statusCode === 403) msg = `Authentication failed (${apiRes.statusCode})`
-          if (apiRes.statusCode === 404) msg = 'Session expired or not found. Start a new chat or resend.'
-          sendChatEvent(event, 'error', { message: msg, statusCode: apiRes.statusCode, sessionExpired: apiRes.statusCode === 404 })
-        }
-      })
-      return
-    }
-
-    // Response timeout: 120s between data chunks
-    apiRes.setTimeout(120_000, () => {
-      if (!doneSent) {
-        doneSent = true
-        activeChatId = null
-        sendChatEvent(event, 'error', { message: 'Response timed out (120s)' })
-      }
-      if (activeRequest === req) activeRequest = null
-      req.destroy()
-    })
-
-    let buffer = ''
-
-    let currentEventType = ''  // Track SSE event type from "event:" lines
-    apiRes.on('data', (chunk) => {
-      buffer += chunk.toString()
-      const lines = buffer.split('\n')
-      buffer = lines.pop()
-
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) {
-          currentEventType = ''
-          continue
-        }
-        if (trimmed.startsWith('event: ')) {
-          currentEventType = trimmed.slice(7).trim()
-          continue
-        }
-        if (!trimmed.startsWith('data: ')) continue
-        const data = trimmed.slice(6)
-
-        // Hermes tool progress events
-        if (currentEventType === 'hermes.tool.progress') {
-          try {
-            const payload = JSON.parse(data)
-            const eventType = payload.event_type || 'tool.started'
-            const forward = {
-              event_type: eventType,
-              tool: payload.tool || payload.name || '',
-              emoji: payload.emoji || '',
-              label: payload.label || payload.preview || '',
-            }
-            if (eventType === 'tool.completed') {
-              forward.duration = payload.duration || 0
-              forward.error = payload.error || false
-            }
-            if (eventType === 'reasoning.available') {
-              forward.text = payload.text || ''
-            }
-            sendChatEvent(event, 'tool_progress', forward)
-          } catch (_) {}
-          continue
-        }
-
-        if (data === '[DONE]') {
-          if (!doneSent) {
-            doneSent = true
-            activeChatId = null
-            sendChatEvent(event, 'done', {})
-          }
-          return
-        }
-        try {
-          const parsed = JSON.parse(data)
-          const delta = parsed.choices?.[0]?.delta?.content
-          if (delta) sendChatEvent(event, 'chunk', { content: delta })
-          if (parsed.usage) sendChatEvent(event, 'usage', parsed.usage)
-          if (parsed.model) sendChatEvent(event, 'model', { model: parsed.model })
-          const sid = parsed.headers?.['x-hermes-session-id'] || parsed.session_id
-          if (sid) sendChatEvent(event, 'session', { sessionId: sid })
-        } catch (_) {}
-      }
-    })
-
-    apiRes.on('end', () => {
-      if (!doneSent) {
-        doneSent = true
-        activeChatId = null
-        sendChatEvent(event, 'done', {})
-      }
-      if (activeRequest === req) activeRequest = null
-    })
-
-    apiRes.on('error', (err) => {
-      if (!doneSent) {
-        doneSent = true
-        activeChatId = null
-        sendChatEvent(event, 'error', { message: err.message })
-      }
-      if (activeRequest === req) activeRequest = null
-    })
-  })
-
-  req.on('error', (err) => {
-    sendChatEvent(event, 'error', { message: err.message })
-    activeChatId = null
-    if (activeRequest === req) activeRequest = null
-  })
-
-  // Connection timeout: 30s to establish connection
-  req.setTimeout(30_000, () => {
-    if (!doneSent) {
-      doneSent = true
-      sendChatEvent(event, 'error', { message: 'Connection timed out (30s)' })
-      activeChatId = null
-      if (activeRequest === req) activeRequest = null
-    }
-    req.destroy()
-  })
-
-  req.write(body)
-  req.end()
-  activeRequest = req
-  activeChatId = chatId
+ipcMain.handle('get-api-key', () => {
+  try {
+    if (!safeStorage.isAvailable()) return ''
+    const kf = KEY_FILE_PATH()
+    const fs2 = require('fs')
+    if (!fs2.existsSync(kf)) return ''
+    const enc = fs2.readFileSync(kf)
+    return safeStorage.decryptString(enc)
+  } catch (_) { return '' }
 })
 
-ipcMain.on('chat-cancel', () => {
-  if (activeRequest) {
-    try { activeRequest.destroy() } catch (_) {}
-    activeRequest = null
-  }
-  activeChatId = null
+ipcMain.handle('set-api-key', (_event, plainText) => {
+  try {
+    const fs2 = require('fs')
+    const kf = KEY_FILE_PATH()
+    if (!plainText) {
+      try { fs2.unlinkSync(kf) } catch (_) {}
+      return true
+    }
+    if (!safeStorage.isAvailable()) return false
+    const enc = safeStorage.encryptString(plainText)
+    fs2.writeFileSync(kf, enc)
+    return true
+  } catch (_) { return false }
 })
 
 // ─── IPC: Fetch real model info from Hermes config + Ollama ────────────

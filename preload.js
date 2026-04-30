@@ -122,30 +122,13 @@ contextBridge.exposeInMainWorld('hermesAPI', {
     }
   },
 
-  // Model info (still via IPC — no streaming needed)
+  // Model info (via IPC — reads ~/.hermes/config.yaml + Ollama API)
   getModelInfo: () => ipcRenderer.invoke('get-model-info'),
 
-  // ─── Consolidated IPC event listener ──────────────────────────────────
-  // Single channel replaces the old 7 separate listeners (onChunk, onDone,
-  // onError, onUsage, onModel, onSession, removeAllListeners).
-  // The renderer registers ONE callback that receives { type, payload }.
-  // No listener accumulation possible — replacing the callback is safe.
-
-  onChatEvent: (callback) => {
-    // Remove any previous listener to prevent accumulation
-    ipcRenderer.removeAllListeners('chat-event')
-    ipcRenderer.on('chat-event', (_event, data) => callback(data))
-  },
-
-  // Legacy: send message via IPC (used as fallback if proxy is unavailable)
-  sendMessageIPC: (messages, settings, sessionId, chatId) => {
-    ipcRenderer.send('chat-stream', { messages, settings, sessionId, chatId })
-  },
-
-  // Cancel via IPC
-  cancelStreamIPC: () => {
-    ipcRenderer.send('chat-cancel')
-  },
+  // ─── API key secure storage (safeStorage) ─────────────────────────────
+  // Key is stored encrypted in app userData, never in localStorage.
+  getApiKey: () => ipcRenderer.invoke('get-api-key'),
+  setApiKey: (plainText) => ipcRenderer.invoke('set-api-key', plainText),
 
   // ─── Hermes CLI (cron, skills, plugins) ──────────────────────────────
   cronList:       () => ipcRenderer.invoke('cron-list'),

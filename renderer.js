@@ -349,7 +349,9 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem('hermes_settings', JSON.stringify(settings))
+  // Never store apiKey in localStorage — saved encrypted via safeStorage (see saveSettings)
+  const { apiKey: _omit, ...settingsToStore } = settings
+  localStorage.setItem('hermes_settings', JSON.stringify(settingsToStore))
   _writeAllChats()
 }
 
@@ -397,7 +399,7 @@ function newChat() {
   const chat = { id: generateId(), title: 'New chat', messages: [], sessionId: null, createdAt: Date.now(), pinned: false }
   chats.unshift(chat)
   activeChatId = chat.id
-  saveState()
+  saveActiveChat() // O(1): only write the new chat + update index
   renderSidebar()
   renderMessages()
   updateTopbar()
@@ -430,9 +432,8 @@ function togglePin(id) {
 
 function deleteChat(id) {
   chats = chats.filter(c => c.id !== id)
-  removeChatStorage(id)
+  removeChatStorage(id)  // removes key + updates index — no saveState() needed
   if (activeChatId === id) activeChatId = chats[0]?.id || null
-  saveState()
   renderSidebar()
   renderMessages()
   updateTopbar()
@@ -445,7 +446,7 @@ function getActiveChat() {
 
 function setTitle(id, title) {
   const c = chats.find(x => x.id === id)
-  if (c) { c.title = title.slice(0, 60); saveState(); renderSidebar() }
+  if (c) { c.title = title.slice(0, 80); saveActiveChat(); renderSidebar() }
 }
 
 // ─── Search filter ───────────────────────────────────────────────────────────
@@ -705,9 +706,8 @@ function renderMessages() {
     })
   }
   scrollToBottom(true) // force scroll on chat switch
-  // Highlight code blocks after rendering
-  highlightCodeBlocks(msgContainer)
-  // Render math ($...$, $$...$$) in all loaded messages
+  // Math rendering runs once on full load (not during streaming — avoids flicker)
+  // Code highlighting already happens per-bubble inside appendMessageBubble()
   renderMath(msgContainer)
 }
 
@@ -801,7 +801,8 @@ function setSendEnabled(enabled) {
 
 // ─── Send message (via stream proxy) ─────────────────────────────────────────
 
-let activeStreamCtrl = null  // { close(), eventSource } for current stream
+let activeStreamCtrl = null   // { close(), eventSource } for current stream
+let activeStreamId   = null   // streamId for proxy cancel
 
 function sendMessage() {
   const text = msgInput.value.trim()
@@ -908,6 +909,7 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
       chat.sessionId,
       chat.id
     )
+    activeStreamId = streamId
 
     const ctrl = window.hermesAPI.connectStream(streamId, {
       onChunk: (content) => {
@@ -958,74 +960,10 @@ async function startProxyStream(chat, bubble, _accumulated, _streamDone) {
 
     activeStreamCtrl = ctrl
   } catch (err) {
-    // Proxy unavailable or conflict — fall back to legacy IPC
-    console.warn('[Hermes] Proxy stream failed, falling back to IPC:', err.message)
-    startIPCStream(chat, bubble)
+    // Proxy start failed (conflict, parse error, etc.)
+    console.error('[Hermes] Proxy stream failed:', err.message)
+    errorStream(bubble, '', err.message || 'Could not start stream. Is Hermes running?')
   }
-}
-
-function startIPCStream(chat, bubble) {
-  let streamDone = false
-  let accumulated = ''
-  const messageList = chat.messages.filter(m => m.role === 'user' || m.role === 'assistant')
-
-  // Single consolidated listener — replaces old 7 separate IPC listeners
-  // No listener accumulation possible: onChatEvent replaces the previous callback
-  window.hermesAPI.onChatEvent(({ type, payload }) => {
-    switch (type) {
-      case 'chunk':
-        accumulated += payload.content
-        debouncedStreamRender(bubble, accumulated)
-        throttledSaveInflight(chat.id, messageList, chat.sessionId, accumulated, realModel || null)
-        break
-      case 'model':
-        if (payload.model) { realModel = payload.model; syncModelPill(); updateContextPill() }
-        break
-      case 'session':
-        if (payload.sessionId && chat) { chat.sessionId = payload.sessionId; saveActiveChat() }
-        break
-      case 'usage':
-        if (payload && payload.prompt_tokens != null) {
-          contextUsed = payload.prompt_tokens
-          updateContextPill()
-        }
-        break
-      case 'done':
-        if (streamDone) return
-        streamDone = true
-        finishStream(bubble, accumulated, chat)
-        break
-      case 'error':
-        if (streamDone) return
-        streamDone = true
-        // Session expired → clear sessionId so next request starts fresh
-        if (payload && payload.sessionExpired && chat) {
-          chat.sessionId = null
-          saveActiveChat()
-        }
-        errorStream(bubble, accumulated, payload.message || 'Unknown error')
-        break
-      case 'tool_progress':
-        // data from Hermes API: { event_type, tool, emoji, label, duration, error, text }
-        if (payload) {
-          if (payload.event_type === 'tool.completed') {
-            markToolCompleted(payload.tool || payload.name, payload.duration, payload.error)
-          } else if (payload.event_type === 'reasoning.available') {
-            addReasoningEntry(payload.text || '')
-          } else if (payload.tool || payload.name) {
-            addToolCall(payload.tool || payload.name, payload.label || payload.preview || '', payload.emoji || '')
-          }
-        }
-        break
-    }
-  })
-
-  window.hermesAPI.sendMessageIPC(
-    chat.messages.filter(m => m.role === 'user' || m.role === 'assistant'),
-    settings,
-    chat.sessionId,
-    chat.id
-  )
 }
 
 function finishStream(bubble, accumulated, chat) {
@@ -1050,6 +988,7 @@ function finishStream(bubble, accumulated, chat) {
   isStreaming = false
   userScrolledUp = false
   activeStreamCtrl = null
+  activeStreamId   = null
   setSendEnabled(true)
   updateContextPill()
   msgInput.focus()
@@ -1082,13 +1021,14 @@ function errorStream(bubble, accumulated, err) {
       resendLastUserMessage()
     })
   } else {
-    bubble.innerHTML = `<span style="color:#e88">⚠ ${escapeHtml(err)}</span>`
+    bubble.innerHTML = `<span style="color:var(--danger)">⚠ ${escapeHtml(err)}</span>`
   }
 
   showError(err)
   isStreaming = false
   userScrolledUp = false
   activeStreamCtrl = null
+  activeStreamId   = null
   setSendEnabled(true)
   hideScrollButton()
 }
@@ -1133,7 +1073,10 @@ function cancelCurrentStream() {
     activeStreamCtrl.close()
     activeStreamCtrl = null
   }
-  window.hermesAPI.cancelStreamIPC()
+  if (activeStreamId) {
+    window.hermesAPI.cancelStream(activeStreamId).catch(() => {})
+    activeStreamId = null
+  }
 }
 
 // ─── Input auto-resize ────────────────────────────────────────────────────────
@@ -1689,7 +1632,9 @@ function saveSettings() {
   settings.apiKey   = sApiKey.value.trim()   || DEFAULT_SETTINGS.apiKey
   settings.model    = sModel.value.trim()    || DEFAULT_SETTINGS.model
   if (sSendKey) settings.sendKey = sSendKey.value
-  saveState()
+  // Persist API key encrypted (not in localStorage)
+  window.hermesAPI.setApiKey(settings.apiKey).catch(() => {})
+  saveState()  // saveState omits apiKey from the localStorage blob
   syncModelPill()
   closeSettings()
   // Re-fetch model info + re-check connection when settings change
@@ -1857,6 +1802,34 @@ updateTopbar()
 updateContextPill()
 checkTopbarConnection()
 setTimeout(() => msgInput.focus(), 100)
+
+// ─── API key secure load (async, after render) ───────────────────────────────
+// Loads the API key from safeStorage (OS keychain). Falls back to any value
+// still in localStorage for one-time migration of existing installations.
+;(async () => {
+  try {
+    const encryptedKey = await window.hermesAPI.getApiKey()
+    if (encryptedKey) {
+      // safeStorage has the key — use it
+      settings.apiKey = encryptedKey
+    } else {
+      // First run or migration: check if apiKey is still in localStorage blob
+      const raw = localStorage.getItem('hermes_settings')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed.apiKey && parsed.apiKey !== DEFAULT_SETTINGS.apiKey) {
+          settings.apiKey = parsed.apiKey
+          // Migrate: encrypt and store, then remove from localStorage
+          await window.hermesAPI.setApiKey(parsed.apiKey)
+          delete parsed.apiKey
+          localStorage.setItem('hermes_settings', JSON.stringify(parsed))
+        }
+      }
+    }
+  } catch (_) {
+    // safeStorage unavailable (e.g. headless CI) — apiKey stays from loadState()
+  }
+})()
 
 // Flush inflight state before page unload (handles clean Electron close mid-stream)
 window.addEventListener('beforeunload', () => {

@@ -551,4 +551,100 @@ These are not actionable today but become viable if the Hermes API server adds s
 
 ---
 
+## 9. UX Backlog (from April 2026 audit)
+
+These items were identified in a full app audit and are ready for implementation. They are lower priority than the critical bugs above but meaningfully improve daily usability.
+
+### 9.1 Delete confirmation
+
+**Problem:** Clicking the trash icon on a chat deletes it instantly with no undo. One misclick on a long conversation destroys it permanently.
+
+**Proposed:** A two-step pattern — first click turns the icon red and shows a small "confirm?" tooltip, second click within 3 seconds confirms. No modal dialogs needed. Alternatively, `window.confirm()` as a quick fix.
+
+**Effort:** Low.
+
+---
+
+### 9.2 Window size and position persistence
+
+**Problem:** Every restart opens the window at exactly 1100×780 regardless of where you left it.
+
+**Proposed:** Use `electron-window-state` package, or manually save `{ x, y, width, height }` to `app.getPath('userData')/window-state.json` on `close` and restore in `createWindow()`.
+
+**Effort:** Low.
+
+---
+
+### 9.3 Full-text chat search
+
+**Problem:** The sidebar search only matches chat titles. Searching for a topic discussed in a conversation requires remembering what you titled it.
+
+**Proposed:** On each keypress in the search box, also scan `chat.messages[].content` for the query. Show a match count badge on each result. Keep title matches ranked above body matches.
+
+**Effort:** Low-Medium (depends on chat volume; localStorage is fast enough for <200 chats).
+
+---
+
+### 9.4 Keyboard shortcuts
+
+**Problem:** No hotkeys for common actions.
+
+**Proposed shortcuts:**
+
+| Shortcut | Action |
+|---|---|
+| `Cmd+N` | New chat |
+| `Cmd+K` | Focus sidebar search |
+| `Cmd+,` | Open settings |
+| `Escape` | Cancel stream / close settings |
+| `Cmd+Shift+T` | Toggle Activity sidebar (already works) |
+
+Wire these in `renderer.js` via a `document.addEventListener('keydown', ...)` handler. Already have a model for this from the Activity sidebar shortcut.
+
+**Effort:** Low.
+
+---
+
+### 9.5 AI-generated chat titles
+
+**Problem:** Chat titles are the first user message truncated to 80 chars — often not meaningful ("Hey can you help me with…").
+
+**Proposed:** After the first assistant reply completes, send a silent background request to the Hermes API with a system prompt like `"Summarize this conversation in 5 words or fewer"`. Set the result as the chat title. Show a short animation on the title while it generates.
+
+**Hermes note:** This would create a second session or require a special `X-Hermes-No-Session` header to avoid polluting the chat context. Verify API supports it.
+
+**Effort:** Medium.
+
+---
+
+### 9.6 Activity sidebar auto-clears on new message
+
+**Problem:** If message A triggered tools and opened the sidebar, message B (with no tools) leaves the sidebar open showing stale activity from A.
+
+**Proposed:** `clearToolList()` is already called in `newChat()` and `switchChat()`. Also call it at the start of each `sendMessage()` before the stream begins, so the Activity panel resets for every new outgoing message.
+
+**Effort:** Trivial (one line).
+
+---
+
+### 9.7 Per-chat scroll position memory
+
+**Problem:** Switching away from a chat and back always jumps to the bottom. Reading history mid-conversation loses your place.
+
+**Proposed:** Store `scrollTop` per `chatId` in a `Map<chatId, number>`. On `switchChat()`, save the current scroll position before switching. On `renderMessages()`, restore it after render (with a `requestAnimationFrame` delay to wait for layout).
+
+**Effort:** Low.
+
+---
+
+### 9.8 Copy button on user messages
+
+**Problem:** Code blocks have a copy button. User message bubbles do not, making it awkward to reuse text you typed.
+
+**Proposed:** On hover of a `.msg-row.user`, show a small copy icon (matching the code-copy-btn style) in the top-right corner of the bubble. On click, copy `bubble.textContent` to clipboard.
+
+**Effort:** Low.
+
+---
+
 *End of document. Review, discuss, then implement in batches per the priority matrix.*
